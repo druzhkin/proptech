@@ -6,6 +6,7 @@ Usage:
     python src/find_channels.py
 """
 
+import httplib2
 import json
 import logging
 import os
@@ -62,7 +63,8 @@ def main() -> None:
         logger.error("YOUTUBE_API_KEY not set in config/.env")
         sys.exit(1)
 
-    youtube = build("youtube", "v3", developerKey=api_key)
+    http = httplib2.Http(disable_ssl_certificate_validation=True)
+    youtube = build("youtube", "v3", developerKey=api_key, http=http)
     data = load_channels()
 
     found = 0

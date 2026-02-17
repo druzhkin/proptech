@@ -8,6 +8,7 @@ Functions:
 - collect_all_channels(channels_config, youtube_api_key, days_back=7) -> list[dict]
 """
 
+import httplib2
 import json
 import logging
 import os
@@ -107,7 +108,8 @@ def collect_all_channels(
     2. Try to get transcript for each
     3. Return list of articles in unified format
     """
-    youtube = build("youtube", "v3", developerKey=youtube_api_key)
+    http = httplib2.Http(disable_ssl_certificate_validation=True)
+    youtube = build("youtube", "v3", developerKey=youtube_api_key, http=http)
     articles = []
 
     for channel in channels_config["channels"]:

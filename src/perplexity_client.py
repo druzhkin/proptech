@@ -53,7 +53,8 @@ def _call_perplexity(api_key: str, prompt: str) -> dict:
         PERPLEXITY_API_URL,
         headers=headers,
         json=payload,
-        timeout=120,
+        timeout=300,
+        verify=False,
     )
     response.raise_for_status()
     return response.json()
@@ -77,13 +78,20 @@ def parse_perplexity_response(response_json: dict) -> list[dict]:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Split by numbered items: "1.", "2.", ... "10."
-    # Pattern: line starts with a number followed by dot
-    parts = re.split(r"\n(?=\d{1,2}\.[\s\)])", content)
+    # Split by numbered items. Supports multiple formats:
+    # "1. Title", "## Новость #1:", "## 1.", "### 1." etc.
+    parts = re.split(
+        r"\n(?=##\s+(?:Новость\s+)?#?\d{1,2}[:\.]|(?:^|\n)\d{1,2}\.[\s\)])",
+        content,
+    )
+
+    # If first split didn't work well, try simpler heading-based split
+    if len(parts) < 3:
+        parts = re.split(r"\n(?=##\s+)", content)
 
     articles = []
 
-    # If we got fewer than 3 parts, parsing likely failed — save as single article
+    # If we still got fewer than 3 parts, save as single article
     if len(parts) < 3:
         logger.warning(
             "Could not split into individual news items (got %d parts). "
@@ -112,9 +120,9 @@ def parse_perplexity_response(response_json: dict) -> list[dict]:
         # Extract title: first meaningful line
         lines = part.split("\n")
         title_line = lines[0].strip()
-        # Remove leading number and punctuation: "1. Title" -> "Title"
-        title = re.sub(r"^\d{1,2}[\.\)]\s*", "", title_line)
-        # Remove markdown bold
+        # Remove markdown headings, numbering, and formatting
+        title = re.sub(r"^#+\s*", "", title_line)
+        title = re.sub(r"^(?:Новость\s+)?#?\d{1,2}[:\.\)]\s*", "", title)
         title = re.sub(r"\*\*", "", title)
         title = title.strip()
 
