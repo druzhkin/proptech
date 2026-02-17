@@ -1,0 +1,24 @@
+{
+  "channels": [
+    {"name": "TestFit", "search_query": "TestFit real estate feasibility", "channel_id": null},
+    {"name": "Propmodo", "search_query": "Propmodo proptech", "channel_id": null},
+    {"name": "CREtech", "search_query": "CREtech commercial real estate technology", "channel_id": null},
+    {"name": "Autodesk", "search_query": "Autodesk official", "channel_id": null},
+    {"name": "Trimble Construction", "search_query": "Trimble construction technology", "channel_id": null},
+    {"name": "OpenSpace AI", "search_query": "OpenSpace construction AI", "channel_id": null},
+    {"name": "SANY Group", "search_query": "SANY heavy industry official", "channel_id": null},
+    {"name": "XCMG Group", "search_query": "XCMG construction machinery", "channel_id": null},
+    {"name": "Cemex Ventures", "search_query": "Cemex Ventures contech", "channel_id": null},
+    {"name": "Matterport", "search_query": "Matterport 3D capture", "channel_id": null},
+    {"name": "Snaptrude", "search_query": "Snaptrude architecture AI", "channel_id": null},
+    {"name": "Maket AI", "search_query": "Maket AI architecture", "channel_id": null},
+    {"name": "Beike VR", "search_query": "Realsee 3D virtual tour", "channel_id": null},
+    {"name": "Built by Builders", "search_query": "Built by Builders construction tech", "channel_id": null},
+    {"name": "EliseAI", "search_query": "EliseAI property management", "channel_id": null},
+    {"name": "PriceHubble", "search_query": "PriceHubble real estate valuation", "channel_id": null},
+    {"name": "Buildots", "search_query": "Buildots construction monitoring", "channel_id": null},
+    {"name": "nPlan", "search_query": "nPlan construction scheduling AI", "channel_id": null},
+    {"name": "Togal AI", "search_query": "Togal AI construction takeoff", "channel_id": null},
+    {"name": "Hypar", "search_query": "Hypar building design", "channel_id": null}
+  ]
+}

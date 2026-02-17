@@ -1,0 +1,14 @@
+[
+  {"id": "ev001", "title": "TestFit vs Snaptrude vs Maket.ai — сравнение генеративного дизайна", "category": "проектирование", "used": false},
+  {"id": "ev002", "title": "Что такое AVM и почему автоматическая оценка меняет рынок", "category": "ценообразование", "used": false},
+  {"id": "ev003", "title": "Computer vision на стройке: OpenSpace vs Buildots vs Disperse", "category": "стройка", "used": false},
+  {"id": "ev004", "title": "Digital twins: хайп vs реальность", "category": "эксплуатация", "used": false},
+  {"id": "ev005", "title": "Почему PropTech-стартапы умирают: разбор кладбища", "category": "аналитика", "used": false},
+  {"id": "ev006", "title": "Beike/KE Holdings: крупнейшая платформа Китая изнутри", "category": "продажи", "used": false},
+  {"id": "ev007", "title": "AI генерирует рендеры фасадов: 5 инструментов которые работают", "category": "визуализация", "used": false},
+  {"id": "ev008", "title": "3D-печать домов в 2026: где реальные проекты", "category": "роботы", "used": false},
+  {"id": "ev009", "title": "AI-чатбот продаёт квартиры: EliseAI, Hyro, Apartment Ocean", "category": "продажи", "used": false},
+  {"id": "ev010", "title": "Модульное строительство: почему Katerra обанкротилась а Volumetric растёт", "category": "стройка", "used": false},
+  {"id": "ev011", "title": "Data moat в девелопменте: миф или реальность", "category": "аналитика", "used": false},
+  {"id": "ev012", "title": "BIM обязателен но никто не использует: почему?", "category": "проектирование", "used": false}
+]
