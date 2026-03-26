@@ -73,6 +73,7 @@
 - [CODE] `src/collect.py`: добавлен evergreen fallback только на сценарий пустого ответа Perplexity без source failure; evergreen-элементы получают внутренний `evergreen://...` URL для стабильной дедупликации
 - [TEST] `tests/test_collect.py`, `tests/test_logging_utils.py`: добавлены сценарии на evergreen fallback, запрет маскировки source failure и ротацию/создание log file
 - [CRITIC] Прогнаны quality gates: `ruff check src/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -v --tb=short`, `python -c "from src.collect import main; print('collect OK')"`, `python src/find_channels.py`
+- [COMMIT] Ветка `codex/iteration-1` обновлена на `origin`, открытый PR `https://github.com/druzhkin/proptech/pull/1` содержит и итерацию 2
 
 ### Ретроспектива итерации 2
 
