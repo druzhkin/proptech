@@ -172,7 +172,7 @@ def test_main_saves_drafts_and_rejects_evergreen(monkeypatch, tmp_path) -> None:
             ),
         ),
     )
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "token")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "token")
 
     result = generate.main(["--date", "2026-03-26", "--max", "5"])
     saved = json.loads((drafts_dir / "2026-03-26.json").read_text(encoding="utf-8"))

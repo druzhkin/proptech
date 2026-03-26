@@ -4,7 +4,7 @@
 
 Сейчас в репозитории реально реализованы:
 - сбор контента через Perplexity и YouTube
-- генерация черновиков через Claude
+- генерация черновиков через OpenRouter
 - единый entry point `python pipeline.py` для `collect -> generate`
 - Telegram review/publish bot поверх `data/drafts`
 
@@ -64,7 +64,7 @@ logs/       — ежедневные pipeline-логи
 
 - **Perplexity API** (sonar-deep-research) — глубокий поиск новостей PropTech за неделю
 - **YouTube Data API v3** — мониторинг каналов + транскрипты видео
-- **Anthropic Claude API** — фильтрация статей и генерация Telegram-черновиков
+- **OpenRouter API** — фильтрация статей и генерация Telegram-черновиков
 - **Telegram Bot API** — admin review/publish flow через long polling
 
 ## Что создаётся на диске
@@ -76,7 +76,7 @@ logs/       — ежедневные pipeline-логи
 
 ## Важные ограничения
 
-- `generate.py` требует `ANTHROPIC_API_KEY`; без него скрипт fail-fast-ится понятной ошибкой
+- `generate.py` требует `OPENROUTER_API_KEY`; без него скрипт fail-fast-ится понятной ошибкой
 - `bot.py` требует `TG_BOT_TOKEN`, `TG_CHANNEL_ID`, `TG_ADMIN_ID`; без них бот не стартует
 - evergreen fallback в `collect.py` сейчас создаёт placeholder-темы, а не source-backed статьи
 - live publish в этом окружении пока не подтверждён реальными Telegram credentials

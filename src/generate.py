@@ -49,7 +49,7 @@ def _load_logging_setup() -> Callable[[Path], Path]:
 
 
 def _load_claude_client() -> tuple[FilterArticlesCallable, GenerateValidatedCallable]:
-    """Import Claude helpers in a way that works for package and script execution."""
+    """Import generation helpers in a way that works for package and script execution."""
     if __package__ in (None, ""):
         if str(PROJECT_ROOT) not in sys.path:
             sys.path.insert(0, str(PROJECT_ROOT))
@@ -173,9 +173,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv(ENV_PATH)
     logger.info("Logging to %s", log_path)
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        logger.error("Missing required environment variable: ANTHROPIC_API_KEY")
+        logger.error("Missing required environment variable: OPENROUTER_API_KEY")
         return ExitCode.FAILURE
 
     try:

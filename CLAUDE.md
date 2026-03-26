@@ -5,7 +5,7 @@ Content pipeline for a Telegram channel about PropTech/ConTech.
 
 Current implemented flow:
 - `src/collect.py` — collects articles from Perplexity and YouTube
-- `src/generate.py` — filters articles and writes draft/rejected records via Claude
+- `src/generate.py` — filters articles and writes draft/rejected records via OpenRouter
 - `pipeline.py` — runs `collect -> generate`
 - `src/bot.py` — reviews drafts and publishes approved posts to Telegram
 
@@ -15,7 +15,7 @@ Still missing:
 
 ## Architecture
 - **config/** — API keys, channel lists, prompts, evergreen topics
-- **src/** — collection, Claude generation, Telegram review bot, shared logging/retry helpers
+- **src/** — collection, OpenRouter generation, Telegram review bot, shared logging/retry helpers
 - **data/** — collected articles, generated drafts, and published posts by date
 - **logs/** — daily pipeline logs
 
@@ -23,7 +23,7 @@ Still missing:
 - Python 3.10+
 - Perplexity API (sonar-deep-research) — news search
 - YouTube Data API v3 + youtube-transcript-api — video monitoring
-- Anthropic Claude API — article selection + draft generation
+- OpenRouter API — article selection + draft generation
 - Telegram Bot API — admin review and channel publishing
 - python-dotenv — env management
 
@@ -87,7 +87,7 @@ Generated drafts are stored as JSON objects with at least:
 ```
 
 ## Configuration
-- **config/.env** — API keys (NEVER commit). Keys: `PERPLEXITY_API_KEY`, `YOUTUBE_API_KEY`, `ANTHROPIC_API_KEY`, `TG_BOT_TOKEN`, `TG_CHANNEL_ID`, `TG_ADMIN_ID`
+- **config/.env** — API keys (NEVER commit). Keys: `PERPLEXITY_API_KEY`, `YOUTUBE_API_KEY`, `OPENROUTER_API_KEY`, `TG_BOT_TOKEN`, `TG_CHANNEL_ID`, `TG_ADMIN_ID`
 - **config/channels.json** — YouTube channels with channel_id (run find_channels.py to populate)
 - **config/prompt.md** — Perplexity search prompt (Russian, structured for PropTech news)
 - **config/evergreen_topics.json** — Backup topic bank for slow news days
@@ -97,7 +97,7 @@ Never crash silently. Current rules:
 - `collect.py` fail-fast checks required env vars
 - external API calls use retry/backoff for transient failures
 - empty Perplexity result can fall back to evergreen topics
-- `generate.py` fail-fast checks `ANTHROPIC_API_KEY`
+- `generate.py` fail-fast checks `OPENROUTER_API_KEY`
 - evergreen placeholders are explicitly rejected at generation time instead of being treated as sourced articles
 - `bot.py` fail-fast checks Telegram env vars and falls back to text-only publish if photo upload fails
 

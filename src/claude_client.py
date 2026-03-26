@@ -1,50 +1,92 @@
 #!/usr/bin/env python3
-"""Anthropic Claude client for article filtering and post generation."""
+"""OpenRouter-backed client for article filtering and post generation."""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections.abc import Sequence
 from typing import Any
 
-import anthropic
+import requests
 
 from src.retry_utils import retry_call
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
+OPENROUTER_TIMEOUT_SECONDS = 90
+RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 ALLOWED_CATEGORIES = (
     "PropTech",
     "ConTech",
-    "Инвестиции",
-    "Регулирование",
-    "Тренды",
-)
-
-TRANSIENT_ANTHROPIC_EXCEPTIONS = (
-    anthropic.APIConnectionError,
-    anthropic.APITimeoutError,
-    anthropic.APIResponseValidationError,
-    anthropic.InternalServerError,
-    anthropic.RateLimitError,
+    "\u0418\u043d\u0432\u0435\u0441\u0442\u0438\u0446\u0438\u0438",
+    "\u0420\u0435\u0433\u0443\u043b\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435",
+    "\u0422\u0440\u0435\u043d\u0434\u044b",
 )
 
 
-def _extract_text(message: anthropic.types.Message) -> str:
-    """Extract concatenated text blocks from a Claude response."""
-    parts: list[str] = []
-    for block in message.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return "\n".join(parts).strip()
+class OpenRouterAPIError(RuntimeError):
+    """OpenRouter API error that keeps the HTTP status for retry decisions."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+    @property
+    def is_retryable(self) -> bool:
+        """Whether retry/backoff should be attempted for this API error."""
+        return self.status_code in RETRYABLE_STATUS_CODES
+
+
+def _build_openrouter_headers(api_key: str) -> dict[str, str]:
+    """Build HTTP headers for OpenRouter requests."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    referer = os.getenv("OPENROUTER_SITE_URL", "").strip()
+    app_title = os.getenv("OPENROUTER_APP_NAME", "").strip()
+    if referer:
+        headers["HTTP-Referer"] = referer
+    if app_title:
+        headers["X-OpenRouter-Title"] = app_title
+    return headers
+
+
+def _extract_openrouter_text(response_payload: dict[str, Any]) -> str:
+    """Extract assistant text from an OpenRouter chat completion response."""
+    choices = response_payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("OpenRouter response does not contain choices")
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise ValueError("OpenRouter choice must be an object")
+
+    error_payload = first_choice.get("error")
+    if isinstance(error_payload, dict):
+        raise OpenRouterAPIError(
+            str(error_payload.get("message", "OpenRouter choice returned an error"))
+        )
+
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise ValueError("OpenRouter choice is missing message object")
+
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("OpenRouter message content is empty")
+
+    return content.strip()
 
 
 def _parse_json_payload(raw_text: str) -> dict[str, Any]:
-    """Parse Claude output as JSON, tolerating fenced code blocks."""
+    """Parse model output as JSON, tolerating fenced code blocks."""
     cleaned = raw_text.strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
@@ -52,11 +94,11 @@ def _parse_json_payload(raw_text: str) -> dict[str, Any]:
 
     match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
     if not match:
-        raise ValueError("Claude response does not contain a JSON object")
+        raise ValueError("Model response does not contain a JSON object")
 
     payload = json.loads(match.group(0))
     if not isinstance(payload, dict):
-        raise ValueError("Claude response JSON must be an object")
+        raise ValueError("Model response JSON must be an object")
     return payload
 
 
@@ -68,23 +110,53 @@ def _call_claude_json(
     model: str = DEFAULT_MODEL,
     max_tokens: int = 1200,
 ) -> dict[str, Any]:
-    """Call Claude and parse the result as JSON."""
-    client = anthropic.Anthropic(api_key=api_key)
+    """Call OpenRouter and parse the model result as JSON."""
 
     def _request() -> dict[str, Any]:
-        response = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-            temperature=0.2,
+        response = requests.post(
+            OPENROUTER_API_URL,
+            headers=_build_openrouter_headers(api_key),
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "max_tokens": max_tokens,
+                "temperature": 0.2,
+            },
+            timeout=OPENROUTER_TIMEOUT_SECONDS,
         )
-        return _parse_json_payload(_extract_text(response))
+
+        try:
+            response_payload = response.json()
+        except ValueError:
+            response_payload = None
+
+        if response.status_code >= 400:
+            error_message = f"OpenRouter request failed with status {response.status_code}"
+            if isinstance(response_payload, dict):
+                error = response_payload.get("error")
+                if isinstance(error, dict) and error.get("message"):
+                    error_message = str(error["message"])
+            raise OpenRouterAPIError(
+                error_message,
+                status_code=response.status_code,
+            )
+
+        if not isinstance(response_payload, dict):
+            raise ValueError("OpenRouter returned a non-object response body")
+
+        return _parse_json_payload(_extract_openrouter_text(response_payload))
 
     return retry_call(
         _request,
-        operation="Claude JSON request",
-        retry_exceptions=TRANSIENT_ANTHROPIC_EXCEPTIONS,
+        operation="OpenRouter JSON request",
+        retry_exceptions=(requests.exceptions.RequestException, OpenRouterAPIError),
+        should_retry=lambda exc: (
+            isinstance(exc, requests.exceptions.RequestException)
+            or (isinstance(exc, OpenRouterAPIError) and exc.is_retryable)
+        ),
         logger=logger,
     )
 
@@ -113,15 +185,16 @@ def filter_articles(
     ]
 
     system_prompt = (
-        "Ты редактор Telegram-канала о PropTech/ConTech. "
-        "Выбирай самые ценные статьи для русскоязычной аудитории девелоперов: "
-        "новизна, практическая ценность, значимость для рынка, отсутствие рекламного шума."
+        "You are the editor of a Russian-language Telegram channel about "
+        "PropTech and ConTech. Select the most valuable articles for "
+        "Russian-speaking real estate professionals based on novelty, "
+        "practical value, market significance, and low promotional noise."
     )
     user_prompt = (
-        "Верни только JSON-объект вида "
+        "Return only a JSON object of the form "
         '{"selected_ids":["id1","id2"]}. '
-        f"Нужно выбрать не больше {max_items} материалов.\n\n"
-        f"Статьи:\n{json.dumps(article_summaries, ensure_ascii=False, indent=2)}"
+        f"Select no more than {max_items} articles.\n\n"
+        f"Articles:\n{json.dumps(article_summaries, ensure_ascii=False, indent=2)}"
     )
 
     try:
@@ -136,21 +209,23 @@ def filter_articles(
         if not isinstance(selected_ids, list):
             raise ValueError("selected_ids must be a list")
     except Exception:
-        logger.exception("Claude filtering failed; falling back to first %d articles", max_items)
+        logger.exception(
+            "OpenRouter filtering failed; falling back to first %d articles",
+            max_items,
+        )
         return list(articles[:max_items])
 
-    selected_id_set = {
-        str(item).strip()
-        for item in selected_ids
-        if str(item).strip()
-    }
+    selected_id_set = {str(item).strip() for item in selected_ids if str(item).strip()}
     selected_articles = [
         article
         for article in articles
         if str(article.get("id", "")).strip() in selected_id_set
     ]
     if not selected_articles:
-        logger.warning("Claude selected no valid article IDs; using first %d articles", max_items)
+        logger.warning(
+            "OpenRouter selected no valid article IDs; using first %d articles",
+            max_items,
+        )
         return list(articles[:max_items])
 
     return selected_articles[:max_items]
@@ -165,26 +240,26 @@ def generate_post(
 ) -> dict[str, str]:
     """Generate a Telegram post draft and category for a single article."""
     system_prompt = (
-        "Ты редактор русскоязычного Telegram-канала о PropTech/ConTech. "
-        "Пиши делово, конкретно, без воды, без markdown. "
-        "Верни только JSON-объект вида "
+        "You are the editor of a Russian-language Telegram channel about "
+        "PropTech and ConTech. Write concise, businesslike Russian text "
+        "without markdown. Return only a JSON object of the form "
         '{"text":"...","category":"..."} '
-        f"где category одна из {', '.join(ALLOWED_CATEGORIES)}."
+        f"where category is one of {', '.join(ALLOWED_CATEGORIES)}."
     )
 
     feedback_block = ""
     if feedback:
-        feedback_block = "\nИсправь прошлые ошибки:\n- " + "\n- ".join(feedback)
+        feedback_block = "\nFix the previous issues:\n- " + "\n- ".join(feedback)
 
     user_prompt = (
-        "Сделай пост для Telegram на основе статьи.\n"
-        "Требования:\n"
-        "- 150-300 слов, максимум 400\n"
-        "- структура: факт/событие -> почему важно -> что это значит для рынка\n"
-        "- 1-2 тематических эмодзи в начале\n"
-        "- без markdown (#, **, __)\n"
-        f"- в конце обязательно ссылка на источник: {article.get('url', '')}\n\n"
-        f"Статья:\n{json.dumps(article, ensure_ascii=False, indent=2)}"
+        "Write a Telegram post in Russian based on the article.\n"
+        "Requirements:\n"
+        "- 150-300 words, maximum 400\n"
+        "- structure: fact/event -> why it matters -> what it means for the market\n"
+        "- 1-2 topic-relevant emojis at the beginning\n"
+        "- no markdown (#, **, __)\n"
+        f"- must end with the source URL: {article.get('url', '')}\n\n"
+        f"Article:\n{json.dumps(article, ensure_ascii=False, indent=2)}"
         f"{feedback_block}"
     )
 
@@ -199,9 +274,9 @@ def generate_post(
     text = str(payload.get("text", "")).strip()
     category = str(payload.get("category", "")).strip()
     if not text:
-        raise ValueError("Claude response is missing post text")
+        raise ValueError("Model response is missing post text")
     if not category:
-        raise ValueError("Claude response is missing category")
+        raise ValueError("Model response is missing category")
 
     return {"text": text, "category": category}
 

@@ -214,3 +214,45 @@
 - Самая опасная интеграционная дыра закрыта не “красивым UI”, а сохранностью состояния: rerun `generate.py` теперь не должен стирать `published`, `skipped` и admin-edited draft records
 - Утечек credentials не добавлено; бот стартует только при наличии явных Telegram env, а без них завершает работу понятной ошибкой
 - Residual risk: live publish path в реальный Telegram-канал и реальное long-poll взаимодействие не подтверждены в этом окружении, потому что нет проверенных рабочих `TG_BOT_TOKEN`/`TG_CHANNEL_ID`; локальная логика и файловая интеграция зелёные, но production credential path ещё не проверен
+
+## Итерация 6 — 2026-03-26
+
+### Цель итерации
+
+Перевести `R2` с Anthropic SDK на OpenRouter API без ломки уже существующего generate flow.
+
+### Задачи
+
+- [x] TASK-1: Заменить SDK-клиент Anthropic в `src/claude_client.py` на OpenRouter chat completions API через `requests`, сохранив retry/backoff и JSON parsing — агент: Coder
+- [x] TASK-2: Перевести `src/generate.py`, `config/.env.example`, `README.md`, `CLAUDE.md` и `requirements.txt` на `OPENROUTER_API_KEY` и убрать `anthropic` dependency — агент: Coder
+- [x] TASK-3: Добавить/обновить тесты на OpenRouter-compatible response shape и новый env path генерации — агент: Tester
+- [x] TASK-4: Прогнать quality gates и smoke/fail-fast проверки для OpenRouter path — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ tests/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -v --tb=short` проходит для обновлённого набора тестов
+- [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+- [x] manual-check: `generate.py` корректно fail-fast-ится на отсутствующем `OPENROUTER_API_KEY`
+
+### Замечания по объёму
+
+- Файл `src/claude_client.py` оставлен по имени как слой совместимости, но внутри теперь ходит в OpenRouter, а не в Anthropic SDK
+- По умолчанию клиент использует `OPENROUTER_MODEL=anthropic/claude-sonnet-4`, но модель теперь можно переопределить через env без правки кода
+
+### Лог работ
+
+- [CODE] `src/claude_client.py`: Anthropic SDK выпилен, добавлен OpenRouter HTTP client на `requests` с OpenAI-compatible `choices[0].message.content`, retry/backoff на network/429/5xx и optional headers `OPENROUTER_SITE_URL`/`OPENROUTER_APP_NAME`
+- [CODE] `src/generate.py`: fail-fast path переведён на `OPENROUTER_API_KEY`, при этом existing generate flow и merge-логика не изменены по поведению
+- [CODE] `README.md`, `CLAUDE.md`, `config/.env.example`, `requirements.txt`: документация и env/dep layer выровнены под OpenRouter вместо Anthropic SDK
+- [TEST] `tests/test_claude_client.py`, `tests/test_generate.py`: добавлены/обновлены тесты на OpenRouter response shape и новый env path `OPENROUTER_API_KEY`
+- [CRITIC] Прогнаны quality gates: `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -v --tb=short`, `python -c "from src.generate import main; print('generate OK')"`
+- [CRITIC] Manual-check: `generate.py` корректно останавливается на missing `OPENROUTER_API_KEY`; live OpenRouter request в этом окружении не проверялся без продового ключа
+
+### Ретроспектива итерации 6
+
+- Замена провайдера закрыта без ломки `R2`: generate path остался рабочим, но больше не зависит от `anthropic` Python package
+- OpenRouter здесь не “новая фича”, а замена transport/provider layer: промпты, валидация и fallback-selection остались прежними
+- Утечек credentials не добавлено; provider key теперь берётся только из `OPENROUTER_API_KEY`
+- Residual risk: live OpenRouter compatibility с конкретным продовым ключом и конкретной моделью в этом окружении ещё не подтверждена; локальные тесты и fail-fast path зелёные, но production key path ещё нужно проверить
