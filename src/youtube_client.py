@@ -3,20 +3,32 @@
 Client for YouTube Data API v3 + youtube-transcript-api.
 
 Functions:
-- get_new_videos(youtube, channel_id, days_back=7) -> list[dict]
+- get_new_videos(youtube, channel_id, days_back=14) -> list[dict]
 - get_transcript(video_id) -> str | None
-- collect_all_channels(channels_config, youtube_api_key, days_back=7) -> list[dict]
+- collect_all_channels(channels_config, youtube_api_key, days_back=14) -> list[dict]
 """
 
-import httplib2
-import json
+from __future__ import annotations
+
 import logging
-import os
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import (
+    IpBlocked,
+    NoTranscriptFound,
+    RequestBlocked,
+    TranscriptsDisabled,
+    VideoUnavailable,
+    YouTubeRequestFailed,
+)
+
+from src.retry_utils import retry_call
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +40,40 @@ KEYWORDS = [
     "computer vision", "IoT", "drone", "lidar", "prefab",
     "automation", "machine learning", "deep learning",
 ]
+TRANSIENT_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+TRANSCRIPT_LANGUAGES = ("ru", "en")
+TRANSCRIPT_MAX_WORDS = 5000
+MIN_TRANSCRIPT_WORDS = 100
 
 
-def get_new_videos(youtube, channel_id: str, days_back: int = 7) -> list[dict]:
+def _should_retry_http_error(exc: BaseException) -> bool:
+    """Retry only transient YouTube API failures."""
+    if isinstance(exc, HttpError):
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None and getattr(exc, "resp", None) is not None:
+            status_code = getattr(exc.resp, "status", None)
+        return status_code in TRANSIENT_HTTP_STATUS_CODES
+    return True
+
+
+def _normalize_transcript(snippets: Iterable[Any]) -> str:
+    """Collapse transcript snippets from old or new library APIs into plain text."""
+    parts: list[str] = []
+    for snippet in snippets:
+        if isinstance(snippet, dict):
+            text = str(snippet.get("text", "")).strip()
+        else:
+            text = str(getattr(snippet, "text", "")).strip()
+        if text:
+            parts.append(text)
+    return " ".join(parts)
+
+
+def get_new_videos(
+    youtube: Any,
+    channel_id: str,
+    days_back: int = 14,
+) -> list[dict[str, str]]:
     """Fetch recent videos from a channel, filtered by PropTech keywords."""
     published_after = (
         datetime.now(timezone.utc) - timedelta(days=days_back)
@@ -45,12 +88,18 @@ def get_new_videos(youtube, channel_id: str, days_back: int = 7) -> list[dict]:
             maxResults=10,
             type="video",
         )
-        response = request.execute()
+        response = retry_call(
+            request.execute,
+            operation=f"YouTube search for channel {channel_id}",
+            retry_exceptions=(HttpError, OSError, TimeoutError),
+            should_retry=_should_retry_http_error,
+            logger=logger,
+        )
     except Exception as e:
         logger.error("Error fetching videos for channel %s: %s", channel_id, e)
         return []
 
-    videos = []
+    videos: list[dict[str, str]] = []
     for item in response.get("items", []):
         video_id = item["id"]["videoId"]
         snippet = item["snippet"]
@@ -80,37 +129,56 @@ def get_transcript(video_id: str) -> str | None:
     Truncates to 5000 words max.
     """
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(
-            video_id, languages=["en", "ru"]
-        )
-        text = " ".join(t["text"] for t in transcript)
+        transcript_api: Any = YouTubeTranscriptApi()
+        fetch_method = getattr(transcript_api, "fetch", None)
 
-        # Skip garbage transcripts
-        if len(text.split()) < 100:
+        if callable(fetch_method):
+            transcript = retry_call(
+                lambda: fetch_method(video_id, languages=TRANSCRIPT_LANGUAGES),
+                operation=f"YouTube transcript fetch for {video_id}",
+                retry_exceptions=(YouTubeRequestFailed, RequestBlocked, IpBlocked),
+                logger=logger,
+            )
+        else:
+            legacy_method = getattr(YouTubeTranscriptApi, "get_transcript", None)
+            if not callable(legacy_method):
+                raise RuntimeError(
+                    "youtube-transcript-api does not expose fetch/get_transcript"
+                )
+            transcript = retry_call(
+                lambda: legacy_method(video_id, languages=list(TRANSCRIPT_LANGUAGES)),
+                operation=f"YouTube transcript fetch for {video_id}",
+                retry_exceptions=(YouTubeRequestFailed, RequestBlocked, IpBlocked),
+                logger=logger,
+            )
+
+        text = _normalize_transcript(transcript)
+        if len(text.split()) < MIN_TRANSCRIPT_WORDS:
             return None
 
-        # Truncate to 5000 words
-        words = text.split()[:5000]
+        words = text.split()[:TRANSCRIPT_MAX_WORDS]
         return " ".join(words)
-    except Exception:
-        logger.debug("No transcript for video %s", video_id)
+    except (NoTranscriptFound, TranscriptsDisabled, VideoUnavailable) as exc:
+        logger.debug("Transcript unavailable for video %s: %s", video_id, exc)
+        return None
+    except Exception as exc:
+        logger.warning("Failed to load transcript for video %s: %s", video_id, exc)
         return None
 
 
 def collect_all_channels(
-    channels_config: dict,
+    channels_config: dict[str, list[dict[str, str]]],
     youtube_api_key: str,
-    days_back: int = 7,
-) -> list[dict]:
+    days_back: int = 14,
+) -> list[dict[str, str | None]]:
     """
     For each channel in config:
     1. Fetch new videos
     2. Try to get transcript for each
     3. Return list of articles in unified format
     """
-    http = httplib2.Http(disable_ssl_certificate_validation=True)
-    youtube = build("youtube", "v3", developerKey=youtube_api_key, http=http)
-    articles = []
+    youtube = build("youtube", "v3", developerKey=youtube_api_key)
+    articles: list[dict[str, str | None]] = []
 
     for channel in channels_config["channels"]:
         if not channel.get("channel_id"):

@@ -10,21 +10,20 @@ Usage:
 Output: data/articles/YYYY-MM-DD.json
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
 import os
 import sys
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
+from enum import IntEnum
+from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
-
-# Add project root to path
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
-
-from src.perplexity_client import search_proptech_news
-from src.youtube_client import collect_all_channels
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,15 +31,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-ENV_PATH = os.path.join(PROJECT_ROOT, "config", ".env")
-CHANNELS_PATH = os.path.join(PROJECT_ROOT, "config", "channels.json")
-ARTICLES_DIR = os.path.join(PROJECT_ROOT, "data", "articles")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ENV_PATH = PROJECT_ROOT / "config" / ".env"
+CHANNELS_PATH = PROJECT_ROOT / "config" / "channels.json"
+ARTICLES_DIR = PROJECT_ROOT / "data" / "articles"
+
+SearchNewsCallable = Callable[[str], list[dict[str, Any]]]
+CollectVideosCallable = Callable[[dict[str, Any], str], list[dict[str, Any]]]
 
 
-def deduplicate(articles: list[dict]) -> list[dict]:
+class ExitCode(IntEnum):
+    """CLI exit codes for collection runs."""
+
+    SUCCESS = 0
+    PARTIAL_FAILURE = 1
+    FAILURE = 2
+
+
+def _load_collectors() -> tuple[SearchNewsCallable, CollectVideosCallable]:
+    """Import source collectors in a way that works for package and script execution."""
+    if __package__ in (None, ""):
+        if str(PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(PROJECT_ROOT))
+        from src.perplexity_client import search_proptech_news
+        from src.youtube_client import collect_all_channels
+    else:
+        from .perplexity_client import search_proptech_news
+        from .youtube_client import collect_all_channels
+
+    return search_proptech_news, collect_all_channels
+
+
+def deduplicate(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Remove duplicate articles by URL."""
     seen_urls: set[str] = set()
-    unique = []
+    unique: list[dict[str, Any]] = []
     for a in articles:
         url = a.get("url", "")
         if url and url in seen_urls:
@@ -51,33 +76,49 @@ def deduplicate(articles: list[dict]) -> list[dict]:
     return unique
 
 
-def load_channels() -> dict:
-    with open(CHANNELS_PATH, "r", encoding="utf-8") as f:
+def load_channels() -> dict[str, Any]:
+    """Load YouTube channel configuration from disk."""
+    with CHANNELS_PATH.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_articles(articles: list[dict]) -> str:
+def save_articles(articles: list[dict[str, Any]]) -> str:
     """Save articles to data/articles/YYYY-MM-DD.json. Returns file path."""
-    os.makedirs(ARTICLES_DIR, exist_ok=True)
+    ARTICLES_DIR.mkdir(parents=True, exist_ok=True)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    filepath = os.path.join(ARTICLES_DIR, f"{today}.json")
+    filepath = ARTICLES_DIR / f"{today}.json"
 
     # If file exists, merge with existing
-    existing = []
-    if os.path.exists(filepath):
-        with open(filepath, "r", encoding="utf-8") as f:
+    existing: list[dict[str, Any]] = []
+    if filepath.exists():
+        with filepath.open("r", encoding="utf-8") as f:
             existing = json.load(f)
 
     merged = existing + articles
     merged = deduplicate(merged)
 
-    with open(filepath, "w", encoding="utf-8") as f:
+    with filepath.open("w", encoding="utf-8") as f:
         json.dump(merged, f, indent=2, ensure_ascii=False)
 
-    return filepath
+    return str(filepath)
 
 
-def main() -> None:
+def _required_env_vars(
+    *,
+    run_perplexity: bool,
+    run_youtube: bool,
+) -> list[str]:
+    """Return required env vars for the chosen collection engines."""
+    required: list[str] = []
+    if run_perplexity:
+        required.append("PERPLEXITY_API_KEY")
+    if run_youtube:
+        required.append("YOUTUBE_API_KEY")
+    return required
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the collection workflow and return a process exit code."""
     parser = argparse.ArgumentParser(description="PropTech news collector")
     parser.add_argument(
         "--engine",
@@ -85,41 +126,55 @@ def main() -> None:
         default=None,
         help="Collect from specific engine only (default: both)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     load_dotenv(ENV_PATH)
 
     run_perplexity = args.engine in (None, "perplexity")
     run_youtube = args.engine in (None, "youtube")
+    missing_env_vars = [
+        name
+        for name in _required_env_vars(
+            run_perplexity=run_perplexity,
+            run_youtube=run_youtube,
+        )
+        if not os.getenv(name)
+    ]
+    if missing_env_vars:
+        logger.error(
+            "Missing required environment variables: %s",
+            ", ".join(missing_env_vars),
+        )
+        return ExitCode.FAILURE
 
-    all_articles: list[dict] = []
+    search_proptech_news, collect_all_channels = _load_collectors()
+    all_articles: list[dict[str, Any]] = []
+    source_results: dict[str, bool] = {}
 
     # --- Perplexity ---
     if run_perplexity:
         api_key = os.getenv("PERPLEXITY_API_KEY")
-        if not api_key:
-            logger.warning("PERPLEXITY_API_KEY not set, skipping Perplexity")
-        else:
-            try:
-                perplexity_articles = search_proptech_news(api_key)
-                all_articles.extend(perplexity_articles)
-                logger.info("Perplexity: collected %d articles", len(perplexity_articles))
-            except Exception as e:
-                logger.error("Perplexity failed: %s", e)
+        try:
+            perplexity_articles = search_proptech_news(api_key or "")
+            all_articles.extend(perplexity_articles)
+            source_results["perplexity"] = True
+            logger.info("Perplexity: collected %d articles", len(perplexity_articles))
+        except Exception:
+            source_results["perplexity"] = False
+            logger.exception("Perplexity failed")
 
     # --- YouTube ---
     if run_youtube:
         api_key = os.getenv("YOUTUBE_API_KEY")
-        if not api_key:
-            logger.warning("YOUTUBE_API_KEY not set, skipping YouTube")
-        else:
-            try:
-                channels_config = load_channels()
-                youtube_articles = collect_all_channels(channels_config, api_key)
-                all_articles.extend(youtube_articles)
-                logger.info("YouTube: collected %d articles", len(youtube_articles))
-            except Exception as e:
-                logger.error("YouTube failed: %s", e)
+        try:
+            channels_config = load_channels()
+            youtube_articles = collect_all_channels(channels_config, api_key or "")
+            all_articles.extend(youtube_articles)
+            source_results["youtube"] = True
+            logger.info("YouTube: collected %d articles", len(youtube_articles))
+        except Exception:
+            source_results["youtube"] = False
+            logger.exception("YouTube failed")
 
     # --- Deduplicate & Save ---
     all_articles = deduplicate(all_articles)
@@ -130,16 +185,23 @@ def main() -> None:
         logger.warning("No articles collected")
 
     # --- Summary ---
-    sources = {}
+    sources: dict[str, int] = {}
     for a in all_articles:
-        src = a.get("source_type", "unknown")
-        sources[src] = sources.get(src, 0) + 1
+        source_name = str(a.get("source_type", "unknown"))
+        sources[source_name] = sources.get(source_name, 0) + 1
 
     logger.info("=== Collection Summary ===")
     logger.info("Total articles: %d", len(all_articles))
     for src, count in sorted(sources.items()):
         logger.info("  %s: %d", src, count)
 
+    failures = sum(not status for status in source_results.values())
+    if failures == len(source_results):
+        return ExitCode.FAILURE
+    if failures:
+        return ExitCode.PARTIAL_FAILURE
+    return ExitCode.SUCCESS
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

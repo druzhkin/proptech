@@ -6,14 +6,18 @@ Usage:
     python src/find_channels.py
 """
 
-import httplib2
+from __future__ import annotations
+
 import json
 import logging
 import os
 import sys
+from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,24 +25,39 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CHANNELS_PATH = os.path.join(PROJECT_ROOT, "config", "channels.json")
-ENV_PATH = os.path.join(PROJECT_ROOT, "config", ".env")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CHANNELS_PATH = PROJECT_ROOT / "config" / "channels.json"
+ENV_PATH = PROJECT_ROOT / "config" / ".env"
+TRANSIENT_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 
-def load_channels() -> dict:
-    with open(CHANNELS_PATH, "r", encoding="utf-8") as f:
+def _should_retry_http_error(exc: BaseException) -> bool:
+    """Retry only transient YouTube Data API failures."""
+    if isinstance(exc, HttpError):
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None and getattr(exc, "resp", None) is not None:
+            status_code = getattr(exc.resp, "status", None)
+        return status_code in TRANSIENT_HTTP_STATUS_CODES
+    return True
+
+
+def load_channels() -> dict[str, list[dict[str, str]]]:
+    with CHANNELS_PATH.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_channels(data: dict) -> None:
-    with open(CHANNELS_PATH, "w", encoding="utf-8") as f:
+def save_channels(data: dict[str, list[dict[str, str]]]) -> None:
+    with CHANNELS_PATH.open("w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     logger.info("channels.json updated")
 
 
-def find_channel_id(youtube, search_query: str) -> str | None:
+def find_channel_id(youtube: Any, search_query: str) -> str | None:
     """Search YouTube for a channel by query, return channel ID or None."""
+    if __package__ in (None, "") and str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from src.retry_utils import retry_call
+
     try:
         request = youtube.search().list(
             q=search_query,
@@ -46,7 +65,13 @@ def find_channel_id(youtube, search_query: str) -> str | None:
             maxResults=1,
             part="snippet",
         )
-        response = request.execute()
+        response = retry_call(
+            request.execute,
+            operation=f"YouTube channel search for {search_query}",
+            retry_exceptions=(HttpError, OSError, TimeoutError),
+            should_retry=_should_retry_http_error,
+            logger=logger,
+        )
         items = response.get("items", [])
         if items:
             return items[0]["snippet"]["channelId"]
@@ -63,8 +88,7 @@ def main() -> None:
         logger.error("YOUTUBE_API_KEY not set in config/.env")
         sys.exit(1)
 
-    http = httplib2.Http(disable_ssl_certificate_validation=True)
-    youtube = build("youtube", "v3", developerKey=api_key, http=http)
+    youtube = build("youtube", "v3", developerKey=api_key)
     data = load_channels()
 
     found = 0
