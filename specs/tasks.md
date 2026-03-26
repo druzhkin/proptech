@@ -117,6 +117,7 @@
 - [CODE] evergreen placeholder-ы теперь явно идут в `rejected` c причиной `evergreen_placeholder_requires_source_link`, а не превращаются в псевдо-sourced draft
 - [TEST] `tests/test_claude_client.py`, `tests/test_generate.py`: добавлены тесты на Claude JSON parsing, fallback селекции, validate_post, latest-file loading, preserve-published merge и end-to-end generate flow на моках
 - [CRITIC] Прогнаны quality gates: `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -v --tb=short`, `python -c "from src.generate import main; print('generate OK')"`, `python src/generate.py --max 5`
+- [COMMIT] Ветка `codex/iteration-1` обновлена на `origin`, открытый PR `https://github.com/druzhkin/proptech/pull/1` содержит и итерацию 3
 
 ### Ретроспектива итерации 3
 
