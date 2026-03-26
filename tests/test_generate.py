@@ -57,6 +57,60 @@ def test_save_drafts_preserves_published_records(tmp_path, monkeypatch) -> None:
     assert saved[0]["text"] == "published text"
 
 
+def test_save_drafts_preserves_skipped_and_admin_edited_records(tmp_path, monkeypatch) -> None:
+    """Reruns should not resurrect skipped drafts or overwrite admin edits."""
+    drafts_dir = tmp_path / "drafts"
+    monkeypatch.setattr(generate, "DRAFTS_DIR", drafts_dir)
+    drafts_dir.mkdir(parents=True, exist_ok=True)
+    existing_path = drafts_dir / "2026-03-26.json"
+    existing_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "draft-1",
+                    "article_id": "article-1",
+                    "status": "skipped",
+                    "text": "skip me",
+                },
+                {
+                    "id": "draft-2",
+                    "article_id": "article-2",
+                    "status": "draft",
+                    "text": "admin text",
+                    "edited_by_admin": True,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    generate.save_drafts(
+        "2026-03-26",
+        [
+            {
+                "id": "new-draft-1",
+                "article_id": "article-1",
+                "status": "draft",
+                "text": "should not replace skipped",
+            },
+            {
+                "id": "new-draft-2",
+                "article_id": "article-2",
+                "status": "draft",
+                "text": "should not replace admin edit",
+            },
+        ],
+    )
+
+    saved = json.loads(existing_path.read_text(encoding="utf-8"))
+    by_article_id = {record["article_id"]: record for record in saved}
+
+    assert by_article_id["article-1"]["status"] == "skipped"
+    assert by_article_id["article-1"]["text"] == "skip me"
+    assert by_article_id["article-2"]["edited_by_admin"] is True
+    assert by_article_id["article-2"]["text"] == "admin text"
+
+
 def test_main_saves_drafts_and_rejects_evergreen(monkeypatch, tmp_path) -> None:
     """Generation should create drafts for real articles and reject evergreen placeholders."""
     articles_dir = tmp_path / "articles"

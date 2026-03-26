@@ -124,7 +124,7 @@ def _build_draft_record(
 
 
 def save_drafts(drafts_date: str, new_records: list[dict[str, Any]]) -> str:
-    """Save draft records and preserve already published entries on reruns."""
+    """Save draft records and preserve terminal/admin-reviewed entries on reruns."""
     DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
     file_path = DRAFTS_DIR / f"{drafts_date}.json"
 
@@ -147,7 +147,10 @@ def save_drafts(drafts_date: str, new_records: list[dict[str, Any]]) -> str:
             continue
 
         existing = merged_records.get(article_id)
-        if existing and existing.get("status") == "published":
+        if existing and (
+            existing.get("status") in {"published", "skipped"}
+            or bool(existing.get("edited_by_admin"))
+        ):
             continue
         merged_records[article_id] = record
 

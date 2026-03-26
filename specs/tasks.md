@@ -126,3 +126,91 @@
 - Merge-логика в `data/drafts` не затирает уже опубликованные записи, что снижает риск следующей итерации с ботом
 - Утечек credentials не добавлено; `generate.py` fail-fast-ится на отсутствующем `ANTHROPIC_API_KEY`
 - Residual risk: live Claude generation на реальном API в этом окружении не подтверждена, потому что manual check остановился на missing `ANTHROPIC_API_KEY`; то есть код и моки зелёные, но production credential path ещё не проверен
+
+## Итерация 4 — 2026-03-26
+
+### Цель итерации
+
+Собрать текущие рабочие куски в честный orchestration layer и выровнять документацию под фактическое состояние репозитория.
+
+### Задачи
+
+- [x] TASK-1: Реализовать `pipeline.py` как единый entry point `collect -> generate` c корректной остановкой на non-zero collect exit code и понятными exit codes `0/1/2` — агент: Coder
+- [x] TASK-2: Обновить `README.md` и `CLAUDE.md`, чтобы они отражали текущие команды, архитектуру и ограничения проекта, а не только старый сборщик — агент: Coder
+- [x] TASK-3: Обновить `config/.env.example` понятными комментариями к переменным и отмеченным фактом, что `ANTHROPIC_API_KEY` нужен для `generate.py` — агент: Coder
+- [x] TASK-4: Добавить минимальные тесты на orchestration и прогоны документационно-эксплуатационных smoke-paths — агент: Tester
+- [x] TASK-5: Прогнать quality gates и обновить журнал итерации с остаточными рисками — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -v --tb=short` проходит для нового набора тестов
+- [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+- [x] manual-check: `python pipeline.py` даёт предсказуемый orchestration result или понятный fail-fast
+
+### Замечания по объёму
+
+- `bot.py` и Telegram review flow всё ещё вне объёма этой итерации
+- live generate step может остаться непроверенным до появления рабочего `ANTHROPIC_API_KEY`, но pipeline orchestration должен быть корректным и без этого
+
+### Лог работ
+
+- [CODE] `pipeline.py`: добавлен честный orchestration entry point `collect -> generate` с остановкой на non-zero collect exit code и возвратом итогового кода шага генерации
+- [CODE] `README.md`, `CLAUDE.md`, `config/.env.example`: документация и env-шаблон выровнены под фактическое состояние репозитория, включая `generate.py`, `pipeline.py` и текущие ограничения по bot/review flow
+- [TEST] `tests/test_pipeline.py`: добавлены проверки на остановку pipeline при ошибке collect и на корректный запуск generate после успешного collect
+- [CRITIC] Прогнаны quality gates: `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -v --tb=short`, `python -c "from src.generate import main; print('generate OK')"`
+- [CRITIC] Manual-check проведён в двух режимах: живой `python pipeline.py` уткнулся в runtime-риск `youtube-transcript-api`/YouTube IP blocking, а принудительный fail-fast path через пустые `PERPLEXITY_API_KEY/YOUTUBE_API_KEY/ANTHROPIC_API_KEY` подтвердил корректную остановку pipeline без запуска generate
+
+### Ретроспектива итерации 4
+
+- `R4` больше не теоретический: в репозитории есть реальный `pipeline.py`, который не пытается запускать `generate`, если `collect` уже вернул non-zero
+- Документация перестала врать о состоянии проекта: `README.md`, `CLAUDE.md` и `.env.example` теперь соответствуют тому, что действительно можно запустить
+- Утечек credentials не добавлено; pipeline и дочерние CLI по-прежнему берут конфигурацию только из env/`config/.env`
+- Live manual run выявил не абстрактную, а реальную эксплуатационную проблему: YouTube transcript path может подвисать на сетевых ретраях и IP blocking, поэтому production-надёжность `R1` всё ещё ограничена внешней средой
+- Residual risk: `pipeline.py` orchestrates шаги корректно, но end-to-end live success в этом окружении остаётся зависимым от внешних API и наличия рабочего `ANTHROPIC_API_KEY`
+
+## Итерация 5 — 2026-03-26
+
+### Цель итерации
+
+Закрыть первый рабочий thin slice `R3`: дать админу минимальный, но реальный Telegram review/publish flow поверх уже существующих `drafts`.
+
+### Задачи
+
+- [x] TASK-1: Реализовать `src/bot.py` как admin-only long-polling bot с командами `/drafts` и `/status`, inline-действиями Publish/Edit/Skip и понятными ошибками вместо тихих падений — агент: Coder
+- [x] TASK-2: Добавить файловую логику review-state: загрузка последних draft-файлов, безопасный поиск draft по short id/full id, запись `published`-результатов и сохранение admin-изменений текста — агент: Coder
+- [x] TASK-3: Зафиксировать terminal state для bot-flow в `data/drafts`: не терять `published` и `skipped` записи при rerun генерации — агент: Coder
+- [x] TASK-4: Добавить `pytest`-покрытие для bot helper-логики: status counters, short id resolution, save/publish paths и fallback публикации без фото — агент: Tester
+- [x] TASK-5: Прогнать quality gates, smoke import `src.bot` и обновить журнал итерации с остаточными рисками Telegram publish path — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -v --tb=short` проходит для нового набора тестов
+- [x] smoke-тест: `python -c "from src.bot import main; print('bot OK')"`
+- [x] manual-check: `src.bot` корректно загружается, fail-fast-ится на отсутствующих Telegram env и умеет сериализовать review-state без сетевого вызова к Telegram
+
+### Замечания по объёму
+
+- Для этой итерации не добавляется новая зависимость: бот строится поверх уже имеющегося `requests`, а не через отдельный Telegram SDK
+- Полный live publish в реальный канал может остаться непроверенным без рабочего `TG_BOT_TOKEN`/`TG_CHANNEL_ID`, но локальная логика статусов и fallback-пути должна быть закрыта тестами
+
+### Лог работ
+
+- [CODE] `src/bot.py`: добавлен admin-only long-polling bot на `requests` с `/start`, `/drafts`, `/status`, `/cancel`, inline Publish/Edit/Skip, fail-fast проверкой Telegram env и fallback-публикацией текстом при ошибке отправки фото
+- [CODE] `src/bot.py`: реализованы helper-слои для загрузки последнего draft batch, безопасного short-id/full-id lookup, форматирования preview, сохранения admin edit и записи `data/published/YYYY-MM-DD.json`
+- [CODE] `src/generate.py`: merge-логика rerun обновлена так, чтобы не затирать `published`, `skipped` и `edited_by_admin` записи после работы бота
+- [CODE] `README.md`, `CLAUDE.md`, `config/.env.example`: документация и env-шаблон обновлены под реальное наличие `bot.py` и `data/published`
+- [TEST] `tests/test_bot.py`, `tests/test_generate.py`: добавлены тесты на status counters, collision-safe short ids, запись published state, фото-fallback и сохранность `skipped`/admin-edited записей при rerun генерации
+- [CRITIC] Прогнаны quality gates: `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -v --tb=short`, `python -c "from src.bot import main; print('bot OK')"`, `python -c "from src.generate import main as generate_main; print('generate OK')"`, `python -c "from src.collect import main as collect_main; print('collect OK')"`
+- [CRITIC] Manual-check: `src.bot.main(['--once'])` корректно fail-fast-ится на пустых `TG_BOT_TOKEN/TG_CHANNEL_ID/TG_ADMIN_ID`, а `record_publication(...)` сериализует `published` state локально без сетевого вызова
+
+### Ретроспектива итерации 5
+
+- `R3` больше не пустое место: в репозитории есть реальный `src/bot.py`, который может провести admin через `/drafts` и `/status`, сохранить правки и записать публикацию в `data/published`
+- Решение сознательно не добавляет Telegram SDK: raw Bot API через `requests` проще для этого репозитория и не тащит лишнюю зависимость ради базового long polling
+- Самая опасная интеграционная дыра закрыта не “красивым UI”, а сохранностью состояния: rerun `generate.py` теперь не должен стирать `published`, `skipped` и admin-edited draft records
+- Утечек credentials не добавлено; бот стартует только при наличии явных Telegram env, а без них завершает работу понятной ошибкой
+- Residual risk: live publish path в реальный Telegram-канал и реальное long-poll взаимодействие не подтверждены в этом окружении, потому что нет проверенных рабочих `TG_BOT_TOKEN`/`TG_CHANNEL_ID`; локальная логика и файловая интеграция зелёные, но production credential path ещё не проверен
