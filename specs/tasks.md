@@ -248,11 +248,11 @@
 - [CODE] `README.md`, `CLAUDE.md`, `config/.env.example`, `requirements.txt`: документация и env/dep layer выровнены под OpenRouter вместо Anthropic SDK
 - [TEST] `tests/test_claude_client.py`, `tests/test_generate.py`: добавлены/обновлены тесты на OpenRouter response shape и новый env path `OPENROUTER_API_KEY`
 - [CRITIC] Прогнаны quality gates: `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -v --tb=short`, `python -c "from src.generate import main; print('generate OK')"`
-- [CRITIC] Manual-check: `generate.py` корректно останавливается на missing `OPENROUTER_API_KEY`; live OpenRouter request в этом окружении не проверялся без продового ключа
+- [CRITIC] Manual-check: `generate.py` корректно останавливается на missing `OPENROUTER_API_KEY`; live OpenRouter request подтверждён 2026-03-26 через реальный ключ, `python src/generate.py --max 1` успешно создал draft в `data/drafts/2026-03-26.json`
 
 ### Ретроспектива итерации 6
 
 - Замена провайдера закрыта без ломки `R2`: generate path остался рабочим, но больше не зависит от `anthropic` Python package
 - OpenRouter здесь не “новая фича”, а замена transport/provider layer: промпты, валидация и fallback-selection остались прежними
 - Утечек credentials не добавлено; provider key теперь берётся только из `OPENROUTER_API_KEY`
-- Residual risk: live OpenRouter compatibility с конкретным продовым ключом и конкретной моделью в этом окружении ещё не подтверждена; локальные тесты и fail-fast path зелёные, но production key path ещё нужно проверить
+- Residual risk: OpenRouter transport и production key path в этом окружении уже подтверждены, но качество генерации всё ещё зависит от конкретной модели, лимитов аккаунта и внешней доступности провайдера; кроме того, сам ключ после публикации в чате нужно считать скомпрометированным и перевыпустить
