@@ -41,6 +41,18 @@ def _should_retry_http_error(exc: BaseException) -> bool:
     return True
 
 
+def _load_logging_setup() -> Any:
+    """Import the shared logging setup for package and script execution."""
+    if __package__ in (None, ""):
+        if str(PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(PROJECT_ROOT))
+        from src.logging_utils import setup_logging
+    else:
+        from .logging_utils import setup_logging
+
+    return setup_logging
+
+
 def load_channels() -> dict[str, list[dict[str, str]]]:
     with CHANNELS_PATH.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -82,7 +94,10 @@ def find_channel_id(youtube: Any, search_query: str) -> str | None:
 
 
 def main() -> None:
+    setup_logging = _load_logging_setup()
+    log_path = setup_logging(PROJECT_ROOT)
     load_dotenv(ENV_PATH)
+    logger.info("Logging to %s", log_path)
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
         logger.error("YOUTUBE_API_KEY not set in config/.env")

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = PROJECT_ROOT / "config" / ".env"
 CHANNELS_PATH = PROJECT_ROOT / "config" / "channels.json"
+EVERGREEN_TOPICS_PATH = PROJECT_ROOT / "config" / "evergreen_topics.json"
 ARTICLES_DIR = PROJECT_ROOT / "data" / "articles"
 
 SearchNewsCallable = Callable[[str], list[dict[str, Any]]]
@@ -62,6 +63,18 @@ def _load_collectors() -> tuple[SearchNewsCallable, CollectVideosCallable]:
     return search_proptech_news, collect_all_channels
 
 
+def _load_logging_setup() -> Callable[[Path], Path]:
+    """Import the shared logging setup for package and script execution."""
+    if __package__ in (None, ""):
+        if str(PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(PROJECT_ROOT))
+        from src.logging_utils import setup_logging
+    else:
+        from .logging_utils import setup_logging
+
+    return setup_logging
+
+
 def deduplicate(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Remove duplicate articles by URL."""
     seen_urls: set[str] = set()
@@ -80,6 +93,65 @@ def load_channels() -> dict[str, Any]:
     """Load YouTube channel configuration from disk."""
     with CHANNELS_PATH.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_evergreen_topics() -> list[dict[str, Any]]:
+    """Load evergreen topics for fallback collection."""
+    with EVERGREEN_TOPICS_PATH.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, list):
+        raise ValueError("evergreen_topics.json must contain a list")
+
+    topics: list[dict[str, Any]] = []
+    for item in data:
+        if isinstance(item, dict):
+            topics.append(item)
+    return topics
+
+
+def build_evergreen_articles(limit: int = 5) -> list[dict[str, Any]]:
+    """Convert evergreen topics into article-like placeholders for downstream use."""
+    try:
+        topics = load_evergreen_topics()
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        logger.exception("Failed to load evergreen topics")
+        return []
+
+    available_topics = [topic for topic in topics if not topic.get("used", False)]
+    selected_topics = (available_topics or topics)[:limit]
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    evergreen_articles: list[dict[str, Any]] = []
+    for topic in selected_topics:
+        title = str(topic.get("title", "")).strip()
+        if not title:
+            continue
+
+        category_hint = str(topic.get("category", "evergreen")).strip() or "evergreen"
+        topic_id = str(topic.get("id", "unknown")).strip() or "unknown"
+        evergreen_articles.append(
+            {
+                "id": topic_id,
+                "source_type": "perplexity",
+                "source_name": "Evergreen Topics",
+                "title": title,
+                "url": f"evergreen://{topic_id}",
+                "text": (
+                    f"Evergreen topic fallback. Theme: {title}. "
+                    f"Category: {category_hint}. "
+                    "This is a placeholder topic rather than a sourced news article."
+                ),
+                "image_url": None,
+                "date": today,
+                "category_hint": category_hint,
+                "collected_at": now_iso,
+            }
+        )
+
+    return evergreen_articles
 
 
 def save_articles(articles: list[dict[str, Any]]) -> str:
@@ -128,7 +200,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    setup_logging = _load_logging_setup()
+    log_path = setup_logging(PROJECT_ROOT)
     load_dotenv(ENV_PATH)
+    logger.info("Logging to %s", log_path)
 
     run_perplexity = args.engine in (None, "perplexity")
     run_youtube = args.engine in (None, "youtube")
@@ -156,6 +231,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         api_key = os.getenv("PERPLEXITY_API_KEY")
         try:
             perplexity_articles = search_proptech_news(api_key or "")
+            if not perplexity_articles:
+                evergreen_articles = build_evergreen_articles()
+                if evergreen_articles:
+                    perplexity_articles = evergreen_articles
+                    logger.warning(
+                        "Perplexity returned no articles. Added %d evergreen topics.",
+                        len(evergreen_articles),
+                    )
+                else:
+                    logger.warning(
+                        "Perplexity returned no articles and evergreen fallback is empty."
+                    )
             all_articles.extend(perplexity_articles)
             source_results["perplexity"] = True
             logger.info("Perplexity: collected %d articles", len(perplexity_articles))
