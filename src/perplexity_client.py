@@ -5,28 +5,41 @@ Client for Perplexity API (sonar-deep-research).
 Searches for PropTech news and parses the response into structured articles.
 """
 
+from __future__ import annotations
+
 import logging
-import os
 import re
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import requests
 
+from src.retry_utils import retry_call
+
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROMPT_PATH = os.path.join(PROJECT_ROOT, "config", "prompt.md")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROMPT_PATH = PROJECT_ROOT / "config" / "prompt.md"
 
 PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
+TRANSIENT_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 
 def _load_prompt() -> str:
-    with open(PROMPT_PATH, "r", encoding="utf-8") as f:
+    with PROMPT_PATH.open("r", encoding="utf-8") as f:
         return f.read()
 
 
-def _call_perplexity(api_key: str, prompt: str) -> dict:
+def _should_retry_request(exc: BaseException) -> bool:
+    """Retry only transient HTTP failures and network-level request errors."""
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return exc.response.status_code in TRANSIENT_HTTP_STATUS_CODES
+    return isinstance(exc, requests.RequestException)
+
+
+def _call_perplexity(api_key: str, prompt: str) -> dict[str, Any]:
     """Make API call to Perplexity. Returns raw JSON response."""
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -49,18 +62,26 @@ def _call_perplexity(api_key: str, prompt: str) -> dict:
         "return_citations": True,
     }
 
-    response = requests.post(
-        PERPLEXITY_API_URL,
-        headers=headers,
-        json=payload,
-        timeout=300,
-        verify=False,
+    def _perform_request() -> dict[str, Any]:
+        response = requests.post(
+            PERPLEXITY_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=300,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    return retry_call(
+        _perform_request,
+        operation="Perplexity API request",
+        retry_exceptions=(requests.RequestException,),
+        should_retry=_should_retry_request,
+        logger=logger,
     )
-    response.raise_for_status()
-    return response.json()
 
 
-def parse_perplexity_response(response_json: dict) -> list[dict]:
+def parse_perplexity_response(response_json: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Parse Perplexity response into a list of article dicts.
 
@@ -89,7 +110,7 @@ def parse_perplexity_response(response_json: dict) -> list[dict]:
     if len(parts) < 3:
         parts = re.split(r"\n(?=##\s+)", content)
 
-    articles = []
+    articles: list[dict[str, Any]] = []
 
     # If we still got fewer than 3 parts, save as single article
     if len(parts) < 3:
@@ -195,7 +216,7 @@ def _guess_category(text: str) -> str:
     return "unknown"
 
 
-def search_proptech_news(api_key: str) -> list[dict]:
+def search_proptech_news(api_key: str) -> list[dict[str, Any]]:
     """
     Main entry point: search for PropTech news via Perplexity.
 
