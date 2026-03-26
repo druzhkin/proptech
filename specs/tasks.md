@@ -82,3 +82,46 @@
 - `pipeline.py` по-прежнему не сделан намеренно: общий entry point до появления `generate.py` и `bot.py` был бы вводящим в заблуждение слоем
 - Утечек credentials не добавлено; логирование не пишет значения env-переменных
 - Residual risk: evergreen fallback сейчас создаёт topic placeholders с `evergreen://...` вместо внешнего источника, и это придётся отдельно учесть, когда появится `generate.py` и строгая валидация ссылок
+
+## Итерация 3 — 2026-03-26
+
+### Цель итерации
+
+Сделать первый рабочий thin slice `R2`: от чтения собранных статей до записи `data/drafts/YYYY-MM-DD.json` с фильтрацией, генерацией и базовой валидацией через Claude.
+
+### Задачи
+
+- [x] TASK-1: Реализовать `src/claude_client.py` с Anthropic SDK: выбор top-N статей, генерация поста, базовая валидация и retry/backoff для Claude API — агент: Coder
+- [x] TASK-2: Реализовать `src/generate.py`: загрузка сегодняшних или последних доступных статей, вызов Claude-клиента, запись draft/rejected статусов в `data/drafts/YYYY-MM-DD.json`, интеграция с общим logging bootstrap — агент: Coder
+- [x] TASK-3: Явно обработать evergreen placeholder-ы в генерации: не маскировать их под source-backed посты, а сохранять как `rejected` с понятной причиной — агент: Coder
+- [x] TASK-4: Добавить `pytest`-покрытие для Claude JSON parsing, post validation и end-to-end generate flow на моках — агент: Tester
+- [x] TASK-5: Прогнать quality gates и обновить журнал итерации с остаточными рисками — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -v --tb=short` проходит для нового набора тестов
+- [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+- [x] manual-check: `python src/generate.py --max 5` создаёт `data/drafts/YYYY-MM-DD.json` или даёт понятный fail-fast/rejected output
+
+### Замечания по объёму
+
+- `bot.py` и review flow всё ещё вне объёма этой итерации
+- evergreen placeholder-ы не будут притворяться “обычными статьями со ссылкой”; для них нужен честный rejected path
+
+### Лог работ
+
+- [CODE] `src/claude_client.py`: добавлен Anthropic client wrapper с retry/backoff, JSON parsing, выбором top-N статей, генерацией поста и базовой валидацией
+- [CODE] `src/generate.py`: добавлен первый рабочий R2-flow от чтения `data/articles` до записи `data/drafts`, с fallback на последний доступный день и merge-логикой, которая не затирает `published` записи при rerun
+- [CODE] evergreen placeholder-ы теперь явно идут в `rejected` c причиной `evergreen_placeholder_requires_source_link`, а не превращаются в псевдо-sourced draft
+- [TEST] `tests/test_claude_client.py`, `tests/test_generate.py`: добавлены тесты на Claude JSON parsing, fallback селекции, validate_post, latest-file loading, preserve-published merge и end-to-end generate flow на моках
+- [CRITIC] Прогнаны quality gates: `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -v --tb=short`, `python -c "from src.generate import main; print('generate OK')"`, `python src/generate.py --max 5`
+
+### Ретроспектива итерации 3
+
+- `R2` больше не абстракция: в репозитории есть реальный `claude_client.py` и `generate.py`, которые можно вызывать как CLI
+- Evergreen placeholder-ы обработаны честно: rejected path явный, а не спрятанный в “успешную” генерацию без настоящего источника
+- Merge-логика в `data/drafts` не затирает уже опубликованные записи, что снижает риск следующей итерации с ботом
+- Утечек credentials не добавлено; `generate.py` fail-fast-ится на отсутствующем `ANTHROPIC_API_KEY`
+- Residual risk: live Claude generation на реальном API в этом окружении не подтверждена, потому что manual check остановился на missing `ANTHROPIC_API_KEY`; то есть код и моки зелёные, но production credential path ещё не проверен

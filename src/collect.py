@@ -24,11 +24,6 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
