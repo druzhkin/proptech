@@ -46,10 +46,14 @@ Set variables in `config/.env` and never commit that file.
 - `TG_BOT_TOKEN` for the review bot
 - `TG_CHANNEL_ID` target channel username or numeric chat id
 - `TG_ADMIN_ID` optional pinned Telegram user id; if omitted, the bot authorizes real channel administrators dynamically through Telegram `getChatMember`
+- `PIPELINE_SCHEDULER_ENABLED` optional flag to let the same long-running bot service auto-run `collect -> generate`
+- `PIPELINE_INTERVAL_MINUTES` optional scheduler cadence, default `180`
+- `PIPELINE_RUN_ON_START` optional immediate run on boot, useful for Railway restarts
 
 ## Important limits
 
 - `generate.py` fails fast without `OPENROUTER_API_KEY`
 - `bot.py` fails fast without `TG_BOT_TOKEN` and `TG_CHANNEL_ID`
 - YouTube transcript collection can still be affected by IP blocking
-- Railway deployment in this repo is configured for the long-running review bot via `railway.json` with start command `python src/bot.py`; collection and generation can still be run manually or by a separate scheduled service
+- Railway deployment in this repo is configured for the long-running review bot via `railway.json` with start command `python src/bot.py`
+- If `PIPELINE_SCHEDULER_ENABLED=1`, the bot service also runs background `collect -> generate` jobs against the same mounted `/app/data` volume, which keeps drafts visible to the review UI without a second service

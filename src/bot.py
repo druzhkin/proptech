@@ -75,6 +75,18 @@ def _load_logging_setup() -> Callable[[Path], Path]:
     return setup_logging
 
 
+def _load_scheduler_starter() -> Callable[[], Any]:
+    """Import the optional pipeline scheduler bootstrap safely."""
+    if __package__ in (None, ""):
+        if str(PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(PROJECT_ROOT))
+        from src.pipeline_scheduler import start_scheduler_from_env
+    else:
+        from .pipeline_scheduler import start_scheduler_from_env
+
+    return start_scheduler_from_env
+
+
 def _resolve_drafts_file(requested_date: str | None = None) -> Path:
     """Resolve the draft JSON file to use for review."""
     if requested_date:
@@ -828,13 +840,6 @@ def handle_message(
         client.send_message(chat_id, HELP_MESSAGE)
         return
 
-    if text == "/start":
-        client.send_message(
-            chat_id,
-            "Команды: /drafts, /status, /cancel. Кнопки Publish/Edit/Skip работают под каждым draft preview.",
-        )
-        return
-
     if text in {"/drafts", "/next"}:
         send_draft_preview(client, chat_id)
         return
@@ -948,6 +953,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.info(
             "Bot started without TG_ADMIN_ID; channel administrator lookup auth is enabled"
         )
+
+    if not args.once:
+        try:
+            start_scheduler_from_env = _load_scheduler_starter()
+            start_scheduler_from_env()
+        except ValueError as exc:
+            logger.error("Invalid pipeline scheduler configuration: %s", exc)
+            return ExitCode.FAILURE
+
     while True:
         try:
             updates = client.get_updates(offset=offset, timeout=20)
