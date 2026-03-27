@@ -354,6 +354,7 @@
 - [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
 - [x] `pytest tests/ -q` проходит
 - [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+- [x] remote-check: Railway `python src/generate.py --date 2026-03-27` после свежего деплоя дал `Selected 8 articles for generation` и поднял pending queue до `draft=7`
 - [x] ручная проверка: кейс в стиле `Finland's Machine-Readable 3D Planning Framework...` теперь получает `editorial_policy_boring_or_promotional`
 
 ### Лог работы
@@ -433,9 +434,10 @@
 - [CODE] `src/claude_client.py`: `filter_articles()` теперь умеет работать без лимита и в таком режиме возвращает весь eligible набор по editorial-priority order вместо искусственного урезания
 - [TEST] `tests/test_generate.py`, `tests/test_claude_client.py`: добавлены тесты на full-queue generation без `--max`, на исключение terminal records из selection slots и на поведение filter layer без лимита
 - [CRITIC] Прогнаны `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -q` (`48 passed`), `python -c "from src.generate import main; print('generate OK')"`
+- [CRITIC] Railway: свежий коммит выкачен в `review-bot` из чистого git-worktree; `python src/generate.py --date 2026-03-27` на новом runtime исключил `8` уже queued/terminal article IDs из selection slots, выбрал `8` новых eligible статей и поднял batch до `draft=7`
 
 ### Ретроспектива итерации 11
 
 - Пользовательская критика была точной: проблема была не только в editorial bar, а в самой архитектуре очереди; генератор раньше создавал “короткий showcase”, а не полный review backlog
 - Основной дефект был двойной: default `--max=5` и то, что уже опубликованные/пропущенные записи продолжали занимать selection slots до merge, из-за чего pending queue могла схлопываться до `3` даже при большем количестве интересных историй
-- Residual risk: even after this change количество draft'ов всё ещё ограничено качеством upstream articles; если свежий batch бедный или однотипный, queue будет честно короткой, а не искусственно раздуваться мусором
+- Residual risk: even after this change количество draft'ов всё ещё ограничено качеством upstream articles и стабильностью OpenRouter JSON-output; на live run один article generation свалился в `Model response does not contain a JSON object`, но queue всё равно выросла до `7`, а не схлопнулась обратно
