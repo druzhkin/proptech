@@ -476,3 +476,39 @@
 - Скриншот пользователя показал дефект контент-качества, а не оформления: в очередь попал не news item, а meta-commentary blob без source URL, и это было действительно сломанным поведением
 - Одного parser-фильтра было бы мало, потому что такие записи уже успели сохраниться в live batch; поэтому sanitation existing drafts обязателен, иначе старый мусор живёт в очереди бесконечно
 - Residual risk: parser теперь режет digest blobs жёстко, поэтому при очередном слабом ответе Perplexity queue может стать короче; это правильная деградация, но она ещё сильнее подталкивает к отдельному tool-radar/source layer вместо попытки полагаться на один Perplexity batch
+
+## Итерация 13 — 2026-03-27
+
+### Цель итерации
+
+Сделать пайплайн действительно автономным на Railway: `review-bot` должен не только показывать очередь, но и сам регулярно запускать `collect -> generate` внутри того же сервиса и того же volume.
+
+### Задачи
+
+- [x] TASK-1: Вынести общий pipeline runner в пакетный модуль, чтобы им безопасно пользовались и CLI, и long-running bot service — агент: Coder
+- [x] TASK-2: Добавить встроенный background scheduler в `bot.py` с env-конфигурацией, `run_on_start` и защитой от overlap runs — агент: Coder
+- [x] TASK-3: Добавить regression tests на scheduler config, immediate startup run, overlap guard и embedded pipeline path без повторной logging-bootstrap — агент: Tester
+- [x] TASK-4: Включить scheduler в Railway на `review-bot`, задеплоить из чистого worktree и проверить live startup run по логам — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ tests/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -q` проходит
+- [x] smoke-тесты: `python -c "from src.collect import main; print('collect OK')"` / `python -c "from src.generate import main; print('generate OK')"` / `python -c "from src.bot import main; print('bot OK')"` / `python -c "import pipeline; print('pipeline OK')"`
+- [x] Railway runtime logs подтверждают auto-run после рестарта сервиса
+
+### Лог работы
+
+- [CODE] `src/pipeline_runner.py`, `pipeline.py`: общий `run_pipeline()` вынесен в пакетный модуль; standalone CLI сохранил поведение, а bot service получил способ запускать тот же flow без второго сервиса
+- [CODE] `src/pipeline_scheduler.py`, `src/bot.py`: добавлен встроенный daemon scheduler с env-переменными `PIPELINE_SCHEDULER_ENABLED`, `PIPELINE_INTERVAL_MINUTES`, `PIPELINE_RUN_ON_START`; scheduler не стартует в `--once` и не запускает параллельный pipeline run, если предыдущий ещё активен
+- [CODE] `config/.env.example`, `README.md`: задокументирован новый autonomous mode для Railway, где один и тот же `review-bot` процесс и ревьюит, и пополняет очередь на общем `/app/data` volume
+- [TEST] `tests/test_pipeline_scheduler.py`, `tests/test_pipeline.py`: добавлены тесты на disabled-by-default config, fail-fast при кривом interval, startup trigger, overlap guard и shared pipeline runner
+- [CRITIC] Прогнаны `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -q` (`58 passed`), import smoke для `collect/generate/bot/pipeline`
+- [CRITIC] Railway: на `review-bot` выставлены `PIPELINE_SCHEDULER_ENABLED=1`, `PIPELINE_INTERVAL_MINUTES=180`, `PIPELINE_RUN_ON_START=1`; deploy `d9017633-5570-46f8-9ad8-3a99f47a4517` успешен, а runtime logs подтвердили `Starting startup pipeline run` и полный проход до `Draft generation summary: drafts=9 rejected=31`
+
+### Ретроспектива итерации 13
+
+- Отдельный scheduler-service здесь был бы архитектурной ошибкой: queue хранится в файловом volume, и второй сервис не дал бы боту те же данные без отдельного storage refactor
+- Правильная автономность для текущего проекта достигается не cron-сервисом, а in-process scheduler внутри уже живущего `review-bot`
+- Residual risk: `run_on_start` и трёхчасовой cadence означают реальные API-вызовы и расходы при каждом рестарте/цикле; если upstream снова отдаст слабый сигнал или OpenRouter деградирует, сервис останется живым, но качество и объём draft queue всё ещё будут зависеть от внешних провайдеров
