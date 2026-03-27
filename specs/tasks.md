@@ -354,6 +354,7 @@
 - [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
 - [x] `pytest tests/ -q` проходит
 - [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+- [x] remote-check: после Railway rollout и `python src/generate.py --date 2026-03-27` bad digest/meta drafts переведены в `rejected`, а pending queue содержит только `4` source-backed draft записи с URL
 - [x] remote-check: Railway `python src/generate.py --date 2026-03-27` после свежего деплоя дал `Selected 8 articles for generation` и поднял pending queue до `draft=7`
 - [x] ручная проверка: кейс в стиле `Finland's Machine-Readable 3D Planning Framework...` теперь получает `editorial_policy_boring_or_promotional`
 
@@ -468,6 +469,7 @@
 - [CODE] `src/generate.py`: добавлены reject reasons `missing_source_url` и `editorial_policy_digest_or_analysis`; existing draft batch теперь санитизируется перед новой генерацией, и старые bad drafts автоматически переводятся в `rejected`
 - [TEST] `tests/test_perplexity_client.py`, `tests/test_generate.py`: добавлены тесты на drop malformed digest response, reject unsourced article, reject digest article и sanitation уже сохранённого draft
 - [CRITIC] Прогнаны `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -q` (`52 passed`), `python -c "from src.generate import main; print('generate OK')"`
+- [CRITIC] Railway: свежий коммит выкачен в `review-bot`; remote `generate.py` санировал `5` старых draft-записей, перевёл `PropTech Weekly Digest` и другие meta-responses в `rejected`, после чего в live queue остались только 4 draft'а с валидными source URLs
 
 ### Ретроспектива итерации 12
 
