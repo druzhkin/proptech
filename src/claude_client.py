@@ -229,19 +229,26 @@ def filter_articles(
     system_prompt = (
         "You are the editor of a Russian-language Telegram channel about "
         "PropTech and ConTech. Select only technology-driven stories for "
-        "Russian-speaking real estate professionals. Prefer deployed tools, "
-        "automation, AI workflows, robotics, BIM, digital twins, engineering "
-        "methods, and operational product changes. Exclude funding rounds, "
-        "M&A, partnerships without shipped tech, executive moves, and generic "
-        "market commentary."
+        "Russian-speaking real estate professionals. Prefer stories that would "
+        "actually surprise a tech-curious reader: deployed tools, automation, "
+        "AI workflows, robotics, drones, digital twins, industrialized "
+        "construction, computer vision, sensor systems, and operational "
+        "product changes. Exclude funding rounds, M&A, partnerships without "
+        "shipped tech, executive moves, generic market commentary, dry "
+        "permitting/compliance digitization, document-management upgrades, "
+        "standards frameworks, and vendor explainer content."
     )
     user_prompt = (
         "Return only a JSON object of the form "
         '{"selected_ids":["id1","id2"]}. '
         f"Select no more than {max_items} articles.\n\n"
         "Prioritize stories with concrete implementation details, measurable "
-        "results, and product substance. Do not select items whose main news "
-        "angle is investment, valuation, fundraising, or corporate finance.\n\n"
+        "results, visible field usage, and product substance. Prefer items "
+        "that feel genuinely interesting rather than merely useful. Do not "
+        "select items whose main news angle is investment, valuation, "
+        "fundraising, acquisition, corporate finance, compliance workflow, "
+        "site-selection admin tooling, permit automation, or a generic "
+        'vendor "ultimate guide" / blog explainer.\n\n'
         f"Articles:\n{json.dumps(article_summaries, ensure_ascii=False, indent=2)}"
     )
 
@@ -293,8 +300,10 @@ def generate_post(
         "editor, not like a corporate AI assistant. Avoid first-person voice "
         "and never write from 'I', 'we', or 'our' perspective. Focus on "
         "technology, implementation details, constraints, and operational "
-        "impact. Do not turn the post into a funding, PR, or business-roundup "
-        "note. Avoid markdown. Return only a JSON object of the form "
+        "impact. The story should feel interesting to a tech enthusiast, not "
+        "like a dry compliance memo or vendor brochure. Do not turn the post "
+        "into a funding, PR, or business-roundup note. Avoid markdown. Return "
+        "only a JSON object of the form "
         '{"text":"...","category":"..."} '
         f"where category is one of {', '.join(ALLOWED_CATEGORIES)}."
     )
@@ -310,6 +319,7 @@ def generate_post(
         "- 130-260 words, maximum 400\n"
         "- structure: concrete technical shift -> why it matters in practice -> limitation, trade-off, or next implication\n"
         "- write with a human rhythm; vary sentence length and avoid template phrasing\n"
+        "- if the source feels dry, focus on the actual mechanism and why it is unexpectedly useful; do not pad it with generic excitement\n"
         "- no first-person voice and no collective voice ('I', 'we', 'our')\n"
         "- no focus on investments, funding rounds, valuations, or deal gossip\n"
         "- optional emoji is allowed, but only if it feels natural and topic-relevant\n"

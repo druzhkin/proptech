@@ -334,3 +334,39 @@
 - Скриншот из реального чата показал эксплуатационный дефект, который раньше не ловился локальными smoke-проверками: Railway worker мог быть жив, но без draft batch в volume
 - Бот больше не выглядит сломанным в нулевом состоянии и принимает естественную команду `/next`, которую пользователь ожидаемо вводит руками
 - Residual risk: даже после этого фикса empty-state останется нормальным рабочим состоянием, пока scheduled `collect -> generate` в Railway не автоматизирован
+
+## Итерация 9 — 2026-03-27
+
+### Цель итерации
+
+Поднять editorial bar: сухие permitting/compliance/process-digitization и vendor-guide истории не должны доходить до draft queue даже если формально выглядят “технологичными”.
+
+### Задачи
+
+- [x] TASK-1: Ужесточить prefilter в `src/generate.py` против boring/promotional stories и business-first headlines — агент: Coder
+- [x] TASK-2: Подкрутить LLM и collection prompts под более “интересные для технаря” сюжеты — агент: Coder
+- [x] TASK-3: Добавить regression tests на dry permitting, marketing guides и business-first rejection — агент: Tester
+- [x] TASK-4: Прогнать verification, проверить Railway deployment и зафиксировать live-ограничения источников — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ tests/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -q` проходит
+- [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+- [x] ручная проверка: кейс в стиле `Finland's Machine-Readable 3D Planning Framework...` теперь получает `editorial_policy_boring_or_promotional`
+
+### Лог работы
+
+- [CODE] `src/generate.py`: business-first заголовки теперь режутся жёстче; добавлены фильтры на dry process/compliance stories и vendor explainers без deployment evidence
+- [CODE] `src/claude_client.py`: article selection и generation prompt усилены против скучного admin-tech, guide-контента и корпоративной “полезности без вау-эффекта”
+- [CODE] `config/prompt.md`: collection prompt теперь явно просит сюжеты, которые реально интересны техно-аудитории, а не polite process improvement
+- [TEST] `tests/test_generate.py`: добавлены тесты на funding-first even with tech spin, incidental investor mention, dry permitting reject, marketing-guide reject и сохранение hard-tech deployment stories
+- [CRITIC] Прогнаны `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -q` (`41 passed`), `python -c "from src.generate import main; print('generate OK')"`
+- [CRITIC] Railway: новый код задеплоен; live collect на Railway по-прежнему деградирует из-за limitation-responses от Perplexity и IP-blocking transcript path у YouTube, так что источник свежих действительно интересных batch'ей всё ещё операционно нестабилен
+
+### Ретроспектива итерации 9
+
+- Пользовательский пример был валиден: старый editorial gate пропускал не только скучные process-stories, но и business/guide шум, если внутри было достаточно слов вроде BIM, workflow или integration
+- Новый бар намеренно смещён от “формально tech” к “реально любопытно для техно-читателя”: робот, дрон, CV, AI workflow, digital twin, prefab, 3D printing имеют приоритет над permit/compliance digitization
+- Residual risk: даже с лучшим фильтром качество ленты ограничено качеством upstream-сбора; пока Perplexity иногда отдаёт meta-response, а Railway YouTube transcript path ловит IP block, свежих сильных story batches может просто не хватать

@@ -63,6 +63,28 @@ TECH_SIGNAL_KEYWORDS = (
     "\u0441\u0442\u0440\u043e\u0439\u043a",
     "\u044d\u043a\u0441\u043f\u043b\u0443\u0430\u0442\u0430\u0446",
 )
+HIGH_INTEREST_TECH_KEYWORDS = (
+    "ai",
+    "computer vision",
+    "generative",
+    "autonomous",
+    "robot",
+    "robotics",
+    "drone",
+    "rtk",
+    "digital twin",
+    "iot",
+    "sensor",
+    "3d print",
+    "3d printer",
+    "prefab",
+    "prefabricat",
+    "modular",
+    "offsite",
+    "laser scan",
+    "lidar",
+    "machine vision",
+)
 BUSINESS_NOISE_KEYWORDS = (
     "funding",
     "raised",
@@ -88,6 +110,55 @@ BUSINESS_NOISE_KEYWORDS = (
     "\u043f\u043e\u0433\u043b\u043e\u0449",
     "\u043f\u0440\u0438\u0432\u043b\u0435\u043a",
     "\u0432\u0435\u043d\u0447\u0443\u0440",
+)
+DRY_PROCESS_KEYWORDS = (
+    "permit",
+    "permitting",
+    "approval",
+    "approved",
+    "compliance",
+    "regulatory",
+    "regulation",
+    "zoning",
+    "planning framework",
+    "planning system",
+    "document workflow",
+    "document management",
+    "paperwork",
+    "standards",
+    "standardization",
+    "code check",
+    "code compliance",
+    "site selection",
+    "feasibility analysis",
+    "policy threshold",
+    "forms and workflows",
+)
+MARKETING_EXPLAINER_KEYWORDS = (
+    "/blog/",
+    "ultimate guide",
+    "complete guide",
+    "guide for",
+    "what is ",
+    "how to ",
+    "explained",
+    "101",
+)
+DEPLOYMENT_EVIDENCE_KEYWORDS = (
+    "deployed",
+    "deployment",
+    "rolled out",
+    "rollout",
+    "production site",
+    "active site",
+    "installed",
+    "used on",
+    "used by",
+    "customer",
+    "customers",
+    "builders are using",
+    "field deployment",
+    "commercial sales",
 )
 INVALID_SOURCE_MARKERS = (
     "knowledge cutoff",
@@ -176,6 +247,14 @@ def _article_blob(article: dict[str, Any]) -> str:
     ).lower()
 
 
+def _article_lede_blob(article: dict[str, Any]) -> str:
+    """Focus on metadata fields that usually define the main news angle."""
+    return " ".join(
+        str(article.get(field, ""))
+        for field in ("title", "category_hint", "source_name", "url")
+    ).lower()
+
+
 def _contains_keyword(text: str, keyword: str) -> bool:
     """Match short keywords strictly and longer ones as substrings."""
     normalized_keyword = keyword.lower()
@@ -184,12 +263,48 @@ def _contains_keyword(text: str, keyword: str) -> bool:
     return normalized_keyword in text
 
 
+def _keyword_hits(text: str, keywords: Sequence[str]) -> set[str]:
+    """Return the subset of keywords that matched in text."""
+    return {
+        keyword
+        for keyword in keywords
+        if _contains_keyword(text, keyword)
+    }
+
+
+def _has_high_interest_signal(article: dict[str, Any]) -> bool:
+    """Approximate whether a story contains standout technical novelty."""
+    return bool(_keyword_hits(_article_blob(article), HIGH_INTEREST_TECH_KEYWORDS))
+
+
+def _has_deployment_evidence(article: dict[str, Any]) -> bool:
+    """Check for signals that this is a deployment story, not an explainer page."""
+    return bool(_keyword_hits(_article_blob(article), DEPLOYMENT_EVIDENCE_KEYWORDS))
+
+
 def _is_business_noise(article: dict[str, Any]) -> bool:
-    """Reject finance-first stories unless they also contain strong tech signals."""
-    text = _article_blob(article)
-    has_business_noise = any(_contains_keyword(text, keyword) for keyword in BUSINESS_NOISE_KEYWORDS)
-    has_tech_signal = any(_contains_keyword(text, keyword) for keyword in TECH_SIGNAL_KEYWORDS)
-    return has_business_noise and not has_tech_signal
+    """Reject business-first stories even if they sprinkle in tech vocabulary."""
+    return bool(_keyword_hits(_article_lede_blob(article), BUSINESS_NOISE_KEYWORDS))
+
+
+def _is_dry_process_story(article: dict[str, Any]) -> bool:
+    """Reject digitized paperwork/compliance stories unless there is standout tech."""
+    dry_hits = _keyword_hits(_article_blob(article), DRY_PROCESS_KEYWORDS)
+    if not dry_hits:
+        return False
+    return not _has_high_interest_signal(article)
+
+
+def _is_marketing_explainer(article: dict[str, Any]) -> bool:
+    """Reject vendor explainer content unless there is clear deployment evidence."""
+    title_and_url = " ".join(
+        str(article.get(field, ""))
+        for field in ("title", "url", "source_name")
+    ).lower()
+    marketing_hits = _keyword_hits(title_and_url, MARKETING_EXPLAINER_KEYWORDS)
+    if not marketing_hits:
+        return False
+    return not _has_deployment_evidence(article)
 
 
 def _editorial_rejection_reason(article: dict[str, Any]) -> str | None:
@@ -199,6 +314,8 @@ def _editorial_rejection_reason(article: dict[str, Any]) -> str | None:
         return "invalid_source_content"
     if _is_business_noise(article):
         return "editorial_policy_non_technical_or_investment"
+    if _is_dry_process_story(article) or _is_marketing_explainer(article):
+        return "editorial_policy_boring_or_promotional"
     return None
 
 
@@ -341,7 +458,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if editorial_rejected_records:
         logger.info(
-            "Rejected %d finance-first articles due to editorial policy",
+            "Rejected %d low-signal or business-first articles due to editorial policy",
             len(editorial_rejected_records),
         )
 

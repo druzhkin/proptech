@@ -25,20 +25,25 @@ Focus only on technology stories such as:
 4. Smart buildings, IoT, digital twins, predictive maintenance
 5. Data platforms, workflow software, field tools, integrations
 6. Measurable operational deployments in development or construction
+7. Stories that make a tech enthusiast say "this is already working?"
 
 Exclude:
 - funding rounds and valuation news
 - M&A and corporate finance stories
 - executive hires and generic partnerships
 - press releases without a real product, deployment, or technical shift
+- dry stories about permits, compliance, paperwork, document management, or standards frameworks
+- vendor explainers, "ultimate guides", and educational blog posts disguised as news
 - pure marketing, CRM, or sales-performance stories
 - commercial real-estate news; focus on residential development and construction
 
 Priorities:
+- surprising technical mechanism > polite process improvement
 - concrete implementation > announcement
 - measurable result > vague promise
 - shipped tool or pilot with real usage > brand statement
 - technology detail, limitation, or trade-off > promotional copy
+- robotics, drones, computer vision, AI workflows, digital twins, prefab, 3D printing > admin digitization
 
 Output format:
 - use a numbered list with exactly one item per story

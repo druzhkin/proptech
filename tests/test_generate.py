@@ -183,8 +183,8 @@ def test_main_saves_drafts_and_rejects_evergreen(monkeypatch, tmp_path) -> None:
     assert any(record["rejection_reason"] == "evergreen_placeholder_requires_source_link" for record in saved)
 
 
-def test_is_business_noise_requires_more_than_finance_keywords() -> None:
-    """Technology-heavy articles should not be rejected just because they mention investors."""
+def test_is_business_noise_rejects_business_first_headlines_even_with_tech_claims() -> None:
+    """Funding and acquisition angles should be rejected even if they mention technology."""
     business_only = {
         "title": "Startup raises Series A for real estate marketplace",
         "text": "The company raised funding from investors and shared valuation details.",
@@ -192,7 +192,7 @@ def test_is_business_noise_requires_more_than_finance_keywords() -> None:
         "source_name": "Example",
         "url": "https://example.com/funding",
     }
-    with_tech_signal = {
+    business_with_tech_spin = {
         "title": "Startup raises Series A after shipping BIM automation",
         "text": "The release includes BIM clash detection, workflow automation, and field deployment data.",
         "category_hint": "automation",
@@ -201,7 +201,20 @@ def test_is_business_noise_requires_more_than_finance_keywords() -> None:
     }
 
     assert generate._is_business_noise(business_only) is True  # noqa: SLF001
-    assert generate._is_business_noise(with_tech_signal) is False  # noqa: SLF001
+    assert generate._is_business_noise(business_with_tech_spin) is True  # noqa: SLF001
+
+
+def test_is_business_noise_ignores_late_investor_mentions_when_headline_is_technical() -> None:
+    """Incidental investor mentions should not kill an otherwise technical story."""
+    article = {
+        "title": "Drone surveying workflow cuts site capture to one flight",
+        "text": "Builders are using RTK drones on active sites. Investors were mentioned in a background paragraph.",
+        "category_hint": "automation",
+        "source_name": "Example",
+        "url": "https://example.com/drone",
+    }
+
+    assert generate._is_business_noise(article) is False  # noqa: SLF001
 
 
 def test_main_rejects_business_only_articles_before_generation(monkeypatch, tmp_path) -> None:
@@ -290,3 +303,54 @@ def test_editorial_rejection_reason_rejects_limitation_meta_articles() -> None:
     }
 
     assert generate._editorial_rejection_reason(article) == "invalid_source_content"  # noqa: SLF001
+
+
+def test_editorial_rejection_reason_rejects_dry_permitting_story() -> None:
+    """Digitized paperwork and permitting stories should not become Telegram drafts."""
+    article = {
+        "title": "Machine-readable planning framework speeds permit approvals",
+        "text": (
+            "The system helps with permit approvals, compliance checks, standards mapping, "
+            "document workflows, and policy thresholds for planning teams."
+        ),
+        "url": "https://example.com/blog/permit-framework",
+        "category_hint": "planning",
+        "source_name": "Vendor blog",
+    }
+
+    assert (
+        generate._editorial_rejection_reason(article)  # noqa: SLF001
+        == "editorial_policy_boring_or_promotional"
+    )
+
+
+def test_editorial_rejection_reason_rejects_marketing_guide_story() -> None:
+    """Vendor guide pages should be filtered out before generation."""
+    article = {
+        "title": "AI estimating software for contractors",
+        "text": "The article explains benefits and best practices for estimating workflows.",
+        "url": "https://example.com/blog/ai-estimating-software-the-ultimate-guide",
+        "category_hint": "software",
+        "source_name": "Vendor blog",
+    }
+
+    assert (
+        generate._editorial_rejection_reason(article)  # noqa: SLF001
+        == "editorial_policy_boring_or_promotional"
+    )
+
+
+def test_editorial_rejection_reason_keeps_high_interest_deployment_story() -> None:
+    """Deployed hard-tech stories should survive the stricter editorial gate."""
+    article = {
+        "title": "Autonomous drywall robot deployed on active construction sites",
+        "text": (
+            "The robot is operating on production sites, automating repetitive interior finishing "
+            "tasks with computer vision and field deployment feedback loops."
+        ),
+        "url": "https://example.com/robotics/deployment",
+        "category_hint": "robotics",
+        "source_name": "Industry publication",
+    }
+
+    assert generate._editorial_rejection_reason(article) is None  # noqa: SLF001
