@@ -547,6 +547,99 @@ def test_main_excludes_terminal_records_from_new_selection_slots(monkeypatch, tm
     }
 
 
+def test_main_sanitizes_existing_invalid_draft_records(monkeypatch, tmp_path) -> None:
+    """Previously queued digest-like drafts should be demoted on the next generation run."""
+    articles_dir = tmp_path / "articles"
+    drafts_dir = tmp_path / "drafts"
+    articles_dir.mkdir(parents=True, exist_ok=True)
+    drafts_dir.mkdir(parents=True, exist_ok=True)
+
+    (articles_dir / "2026-03-27.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "article-valid",
+                    "source_type": "perplexity",
+                    "source_name": "Perplexity",
+                    "title": "AI planning workflow",
+                    "url": "https://example.com/valid",
+                    "text": "AI planning workflow integrates with BIM and scheduling.",
+                    "image_url": None,
+                    "date": "2026-03-27",
+                    "category_hint": "automation",
+                    "collected_at": "2026-03-27T00:00:00+00:00",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (drafts_dir / "2026-03-27.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "draft-old",
+                    "article_id": "article-bad",
+                    "source_type": "perplexity",
+                    "source_name": "Perplexity Deep Research",
+                    "title": "PropTech Weekly Digest",
+                    "url": "",
+                    "category": "Data & BIM",
+                    "text": "Поиск технических новостей в PropTech сталкивается с фундаментальной проблемой сигнала и шума.",
+                    "status": "draft",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(generate, "ARTICLES_DIR", articles_dir)
+    monkeypatch.setattr(generate, "DRAFTS_DIR", drafts_dir)
+    monkeypatch.setattr(generate, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        generate,
+        "_load_logging_setup",
+        lambda: (lambda _project_root: tmp_path / "logs" / "pipeline-2026-03-27.log"),
+    )
+    monkeypatch.setattr(
+        generate,
+        "_load_claude_client",
+        lambda: (
+            lambda _api_key, selected_articles, max_items=None: list(selected_articles),
+            lambda _api_key, article: (
+                {
+                    "text": f"Useful draft with link {article['url']}",
+                    "category": "Automation",
+                },
+                [],
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        generate,
+        "_load_editorial_policy",
+        lambda: (
+            lambda article: {
+                "score": 8 if article["id"] == "article-valid" else 0,
+                "track_ids": ["bim_and_digital_twin"] if article["id"] == "article-valid" else [],
+                "track_labels": ["BIM, design tools, digital twins, and data layers"] if article["id"] == "article-valid" else [],
+                "business_function_ids": ["construction"] if article["id"] == "article-valid" else [],
+                "business_functions": ["construction"] if article["id"] == "article-valid" else [],
+                "angle": "Focus on the workflow shift.",
+            }
+        ),
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "token")
+
+    result = generate.main(["--date", "2026-03-27"])
+    saved = json.loads((drafts_dir / "2026-03-27.json").read_text(encoding="utf-8"))
+    by_article_id = {record["article_id"]: record for record in saved}
+
+    assert result == generate.ExitCode.SUCCESS
+    assert by_article_id["article-bad"]["status"] == "rejected"
+    assert by_article_id["article-bad"]["rejection_reason"] == "missing_source_url"
+    assert by_article_id["article-valid"]["status"] == "draft"
+
+
 def test_editorial_rejection_reason_rejects_limitation_meta_articles() -> None:
     """Meta answers from upstream collection should never reach generation as drafts."""
     article = {
@@ -558,6 +651,35 @@ def test_editorial_rejection_reason_rejects_limitation_meta_articles() -> None:
     }
 
     assert generate._editorial_rejection_reason(article) == "invalid_source_content"  # noqa: SLF001
+
+
+def test_editorial_rejection_reason_rejects_articles_without_source_url() -> None:
+    """Unsourced articles should never become Telegram drafts."""
+    article = {
+        "title": "Interesting AI workflow for BIM reviews",
+        "text": "The workflow automates BIM coordination across teams.",
+        "url": "",
+        "category_hint": "automation",
+        "source_name": "Perplexity",
+    }
+
+    assert generate._editorial_rejection_reason(article) == "missing_source_url"  # noqa: SLF001
+
+
+def test_editorial_rejection_reason_rejects_digest_articles() -> None:
+    """Digest or roundup blobs should be filtered before generation."""
+    article = {
+        "title": "PropTech Weekly Digest",
+        "text": "A broad roundup of signal and noise across the market.",
+        "url": "https://example.com/digest",
+        "category_hint": "digest",
+        "source_name": "Perplexity Deep Research",
+    }
+
+    assert (
+        generate._editorial_rejection_reason(article)  # noqa: SLF001
+        == "editorial_policy_digest_or_analysis"
+    )
 
 
 def test_editorial_rejection_reason_rejects_dry_permitting_story() -> None:

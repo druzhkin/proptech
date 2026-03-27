@@ -50,3 +50,22 @@ def test_parse_perplexity_response_rejects_limitation_meta_answer() -> None:
     }
 
     assert perplexity_client.parse_perplexity_response(response_json) == []
+
+
+def test_parse_perplexity_response_drops_unsplittable_digest_blob() -> None:
+    """Malformed digest blobs should be dropped instead of becoming fake articles."""
+    response_json = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        "PropTech Weekly Digest\n\n"
+                        "Most recent stories this week are partnerships, fundraising, and broad commentary."
+                    )
+                }
+            }
+        ],
+        "citations": [],
+    }
+
+    assert perplexity_client.parse_perplexity_response(response_json) == []

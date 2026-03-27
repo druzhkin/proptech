@@ -110,7 +110,7 @@ def parse_perplexity_response(response_json: dict[str, Any]) -> list[dict[str, A
 
     Splits text by numbered items (1., 2., ..., 10.).
     Maps citation references [1], [2] etc. to the citations array.
-    Falls back to a single article if parsing fails.
+    Drops malformed digest-style responses if parsing fails.
     """
     try:
         content = response_json["choices"][0]["message"]["content"]
@@ -139,26 +139,15 @@ def parse_perplexity_response(response_json: dict[str, Any]) -> list[dict[str, A
 
     articles: list[dict[str, Any]] = []
 
-    # If we still got fewer than 3 parts, save as single article
+    # If we still got fewer than 3 parts, the response is too malformed or
+    # too digest-like to trust as a source-backed article batch.
     if len(parts) < 3:
         logger.warning(
             "Could not split into individual news items (got %d parts). "
-            "Saving as single article.",
+            "Dropping response instead of creating a digest article.",
             len(parts),
         )
-        articles.append({
-            "id": str(uuid.uuid4()),
-            "source_type": "perplexity",
-            "source_name": "Perplexity Deep Research",
-            "title": "PropTech Weekly Digest",
-            "url": citations[0] if citations else "",
-            "text": content,
-            "image_url": None,
-            "date": today,
-            "category_hint": "digest",
-            "collected_at": now_iso,
-        })
-        return articles
+        return []
 
     for part in parts:
         part = part.strip()

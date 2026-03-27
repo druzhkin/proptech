@@ -441,3 +441,36 @@
 - Пользовательская критика была точной: проблема была не только в editorial bar, а в самой архитектуре очереди; генератор раньше создавал “короткий showcase”, а не полный review backlog
 - Основной дефект был двойной: default `--max=5` и то, что уже опубликованные/пропущенные записи продолжали занимать selection slots до merge, из-за чего pending queue могла схлопываться до `3` даже при большем количестве интересных историй
 - Residual risk: even after this change количество draft'ов всё ещё ограничено качеством upstream articles и стабильностью OpenRouter JSON-output; на live run один article generation свалился в `Model response does not contain a JSON object`, но queue всё равно выросла до `7`, а не схлопнулась обратно
+
+## Итерация 12 — 2026-03-27
+
+### Цель итерации
+
+Убрать из review queue meta-digest и бесссылочные Perplexity-записи: они не должны ни создаваться как статьи, ни переживать следующий generate-run в уже сохранённых draft batch'ах.
+
+### Задачи
+
+- [x] TASK-1: Исправить Perplexity parser, чтобы unsplittable digest blobs не превращались в `PropTech Weekly Digest` article records — агент: Coder
+- [x] TASK-2: Добавить в generation защиту от `missing_source_url` и digest/roundup analysis, плюс санацию уже сохранённых draft-записей — агент: Coder
+- [x] TASK-3: Добавить regression tests на parser drop, unsourced reject и cleanup существующих bad drafts — агент: Tester
+- [x] TASK-4: Прогнать quality gates и подготовить Railway rollout для очистки live queue — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ tests/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -q` проходит
+- [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+
+### Лог работы
+
+- [CODE] `src/perplexity_client.py`: удалён fallback, который при parse failure создавал фейковую статью `PropTech Weekly Digest`; теперь unsplittable blobs просто отбрасываются
+- [CODE] `src/generate.py`: добавлены reject reasons `missing_source_url` и `editorial_policy_digest_or_analysis`; existing draft batch теперь санитизируется перед новой генерацией, и старые bad drafts автоматически переводятся в `rejected`
+- [TEST] `tests/test_perplexity_client.py`, `tests/test_generate.py`: добавлены тесты на drop malformed digest response, reject unsourced article, reject digest article и sanitation уже сохранённого draft
+- [CRITIC] Прогнаны `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -q` (`52 passed`), `python -c "from src.generate import main; print('generate OK')"`
+
+### Ретроспектива итерации 12
+
+- Скриншот пользователя показал дефект контент-качества, а не оформления: в очередь попал не news item, а meta-commentary blob без source URL, и это было действительно сломанным поведением
+- Одного parser-фильтра было бы мало, потому что такие записи уже успели сохраниться в live batch; поэтому sanitation existing drafts обязателен, иначе старый мусор живёт в очереди бесконечно
+- Residual risk: parser теперь режет digest blobs жёстко, поэтому при очередном слабом ответе Perplexity queue может стать короче; это правильная деградация, но она ещё сильнее подталкивает к отдельному tool-radar/source layer вместо попытки полагаться на один Perplexity batch

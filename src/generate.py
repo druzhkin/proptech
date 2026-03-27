@@ -170,6 +170,13 @@ INVALID_SOURCE_MARKERS = (
     "\u043d\u0435 \u043c\u043e\u0433\u0443 \u0433\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0432\u044b\u043c\u044b\u0448\u043b\u0435\u043d\u043d\u044b\u0435 \u043d\u043e\u0432\u043e\u0441\u0442\u0438",
     "\u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0438\u044f \u0438 \u0447\u0435\u0441\u0442\u043d\u044b\u0439 \u043e\u0442\u0432\u0435\u0442",
 )
+DIGEST_MARKERS = (
+    "weekly digest",
+    "digest",
+    "roundup",
+    "signal and noise",
+    "сигнала и шума",
+)
 
 
 class ExitCode(IntEnum):
@@ -320,6 +327,20 @@ def _is_marketing_explainer(article: dict[str, Any]) -> bool:
     return not _has_deployment_evidence(article)
 
 
+def _is_unsourced_article(article: dict[str, Any]) -> bool:
+    """Reject source-backed articles that do not have a source URL."""
+    return not str(article.get("url", "")).strip()
+
+
+def _is_digest_or_analysis(article: dict[str, Any]) -> bool:
+    """Reject digest-style analysis blobs that are not single source-backed stories."""
+    category_hint = str(article.get("category_hint", "")).strip().lower()
+    if category_hint == "digest":
+        return True
+    digest_hits = _keyword_hits(_article_lede_blob(article), DIGEST_MARKERS)
+    return bool(digest_hits)
+
+
 def _is_off_target_for_cio(article: dict[str, Any]) -> bool:
     """Reject stories that do not fit the CIO-style editorial radar."""
     if "editorial_score" not in article and "editorial_track_ids" not in article:
@@ -337,6 +358,10 @@ def _editorial_rejection_reason(article: dict[str, Any]) -> str | None:
     text = _article_blob(article)
     if any(marker in text for marker in INVALID_SOURCE_MARKERS):
         return "invalid_source_content"
+    if _is_unsourced_article(article):
+        return "missing_source_url"
+    if _is_digest_or_analysis(article):
+        return "editorial_policy_digest_or_analysis"
     if _is_business_noise(article):
         return "editorial_policy_non_technical_or_investment"
     if _is_dry_process_story(article) or _is_marketing_explainer(article):
@@ -418,17 +443,63 @@ def _selection_blocked_article_ids(records: Sequence[dict[str, Any]]) -> set[str
     return blocked_ids
 
 
-def save_drafts(drafts_date: str, new_records: list[dict[str, Any]]) -> str:
-    """Save draft records and preserve terminal/admin-reviewed entries on reruns."""
+def _write_draft_records(drafts_date: str, records: list[dict[str, Any]]) -> str:
+    """Write a fully materialized draft batch to disk."""
     DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
     file_path = DRAFTS_DIR / f"{drafts_date}.json"
+    with file_path.open("w", encoding="utf-8") as file_obj:
+        json.dump(records, file_obj, indent=2, ensure_ascii=False)
+    return str(file_path)
 
+
+def _sanitize_existing_records(
+    records: Sequence[dict[str, Any]],
+    describe_editorial_fit: DescribeEditorialCallable,
+) -> tuple[list[dict[str, Any]], int]:
+    """Demote previously generated drafts that no longer satisfy editorial policy."""
+    sanitized_records: list[dict[str, Any]] = []
+    converted_count = 0
+
+    for record in records:
+        status = str(record.get("status", "")).strip()
+        if status != "draft":
+            sanitized_records.append(dict(record))
+            continue
+
+        article_like_record = {
+            "id": str(record.get("article_id", "")).strip() or str(record.get("id", "")).strip(),
+            "source_type": record.get("source_type", ""),
+            "source_name": record.get("source_name", ""),
+            "title": record.get("title", ""),
+            "url": record.get("url", ""),
+            "text": record.get("text", ""),
+            "image_url": record.get("image_url"),
+            "category_hint": record.get("category", ""),
+        }
+        enriched_record = _enrich_article_with_editorial_fit(article_like_record, describe_editorial_fit)
+        rejection_reason = _editorial_rejection_reason(enriched_record)
+        if not rejection_reason:
+            sanitized_records.append(dict(record))
+            continue
+
+        updated_record = dict(record)
+        updated_record["status"] = "rejected"
+        updated_record["rejection_reason"] = rejection_reason
+        updated_record["editorial_score"] = enriched_record.get("editorial_score")
+        updated_record["editorial_tracks"] = enriched_record.get("editorial_tracks", [])
+        updated_record["business_functions"] = enriched_record.get("business_functions", [])
+        sanitized_records.append(updated_record)
+        converted_count += 1
+
+    return sanitized_records, converted_count
+
+
+def save_drafts(drafts_date: str, new_records: list[dict[str, Any]]) -> str:
+    """Save draft records and preserve terminal/admin-reviewed entries on reruns."""
     existing_records: list[dict[str, Any]] = []
+    file_path = DRAFTS_DIR / f"{drafts_date}.json"
     if file_path.exists():
-        with file_path.open("r", encoding="utf-8") as f:
-            loaded = json.load(f)
-        if isinstance(loaded, list):
-            existing_records = [record for record in loaded if isinstance(record, dict)]
+        existing_records = _load_existing_draft_records(drafts_date)
 
     merged_records: dict[str, dict[str, Any]] = {}
     for record in existing_records:
@@ -450,10 +521,7 @@ def save_drafts(drafts_date: str, new_records: list[dict[str, Any]]) -> str:
         merged_records[article_id] = record
 
     final_records = list(merged_records.values())
-    with file_path.open("w", encoding="utf-8") as f:
-        json.dump(final_records, f, indent=2, ensure_ascii=False)
-
-    return str(file_path)
+    return _write_draft_records(drafts_date, final_records)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -490,11 +558,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.exception("Failed to load existing draft batch for %s", articles_date)
         return ExitCode.FAILURE
 
-    logger.info("Loaded %d articles from %s", len(articles), articles_date)
-    if not articles:
-        logger.warning("No articles available for generation")
-        return ExitCode.FAILURE
-
     evergreen_articles = [
         article
         for article in articles
@@ -508,6 +571,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     editorial_rejected_records: list[dict[str, Any]] = []
     eligible_articles: list[dict[str, Any]] = []
     describe_editorial_fit = _load_editorial_policy()
+    existing_records, sanitized_count = _sanitize_existing_records(existing_records, describe_editorial_fit)
+    if sanitized_count:
+        sanitized_path = _write_draft_records(articles_date, existing_records)
+        logger.info(
+            "Sanitized %d previously queued draft records with the updated editorial policy in %s",
+            sanitized_count,
+            sanitized_path,
+        )
+
+    logger.info("Loaded %d articles from %s", len(articles), articles_date)
+    if not articles:
+        logger.warning("No articles available for generation")
+        return ExitCode.FAILURE
+
     for article in source_backed_articles:
         enriched_article = _enrich_article_with_editorial_fit(article, describe_editorial_fit)
         rejection_reason = _editorial_rejection_reason(enriched_article)
