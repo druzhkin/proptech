@@ -52,4 +52,4 @@ Set variables in `config/.env` and never commit that file.
 - `generate.py` fails fast without `OPENROUTER_API_KEY`
 - `bot.py` fails fast without `TG_BOT_TOKEN` and `TG_CHANNEL_ID`
 - YouTube transcript collection can still be affected by IP blocking
-- Railway deployment is currently best suited for the long-running review bot; collection and generation can still be run manually or by a separate scheduled service
+- Railway deployment in this repo is configured for the long-running review bot via `railway.json` with start command `python src/bot.py`; collection and generation can still be run manually or by a separate scheduled service
