@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -26,6 +27,34 @@ ALLOWED_CATEGORIES = (
     "\u0418\u043d\u0432\u0435\u0441\u0442\u0438\u0446\u0438\u0438",
     "\u0420\u0435\u0433\u0443\u043b\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435",
     "\u0422\u0440\u0435\u043d\u0434\u044b",
+)
+FIRST_PERSON_PATTERN = re.compile(
+    r"\b(\u044f|\u043c\u044b|\u043c\u043d\u0435|\u043d\u0430\u043c|\u043d\u0430\u0441|"
+    r"\u043d\u0430\u0448(?:[а-яё]+)?|"
+    r"\u043c\u043e\u0439|\u043c\u043e\u044f|\u043c\u043e\u0438|\u043c\u043e\u0451|\u0443 \u043d\u0430\u0441)\b",
+    flags=re.IGNORECASE,
+)
+STYLE_PROFILES = (
+    (
+        "sharp_newsroom",
+        "Open with the concrete technical shift, not with a broad introduction. "
+        "Use brisk, clean sentences and end on the operational consequence.",
+    ),
+    (
+        "field_note",
+        "Write like an editor who noticed a useful implementation detail in the wild. "
+        "Make the middle paragraph practical and grounded.",
+    ),
+    (
+        "product_zoom",
+        "Center the post on what exactly changed in the product or workflow. "
+        "Name the mechanism, not just the promise.",
+    ),
+    (
+        "contrarian_lens",
+        "Sound curious but unsentimental. "
+        "Highlight one limitation, trade-off, or bottleneck instead of pure praise.",
+    ),
 )
 
 
@@ -100,6 +129,19 @@ def _parse_json_payload(raw_text: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Model response JSON must be an object")
     return payload
+
+
+def _style_brief_for_article(article: dict[str, Any]) -> str:
+    """Pick a deterministic writing brief so drafts do not sound templated."""
+    seed = (
+        str(article.get("id", "")).strip()
+        or str(article.get("url", "")).strip()
+        or str(article.get("title", "")).strip()
+        or "default"
+    )
+    digest = hashlib.md5(seed.encode("utf-8")).hexdigest()
+    profile_name, profile_brief = STYLE_PROFILES[int(digest, 16) % len(STYLE_PROFILES)]
+    return f"Style profile `{profile_name}`: {profile_brief}"
 
 
 def _call_claude_json(
@@ -186,14 +228,20 @@ def filter_articles(
 
     system_prompt = (
         "You are the editor of a Russian-language Telegram channel about "
-        "PropTech and ConTech. Select the most valuable articles for "
-        "Russian-speaking real estate professionals based on novelty, "
-        "practical value, market significance, and low promotional noise."
+        "PropTech and ConTech. Select only technology-driven stories for "
+        "Russian-speaking real estate professionals. Prefer deployed tools, "
+        "automation, AI workflows, robotics, BIM, digital twins, engineering "
+        "methods, and operational product changes. Exclude funding rounds, "
+        "M&A, partnerships without shipped tech, executive moves, and generic "
+        "market commentary."
     )
     user_prompt = (
         "Return only a JSON object of the form "
         '{"selected_ids":["id1","id2"]}. '
         f"Select no more than {max_items} articles.\n\n"
+        "Prioritize stories with concrete implementation details, measurable "
+        "results, and product substance. Do not select items whose main news "
+        "angle is investment, valuation, fundraising, or corporate finance.\n\n"
         f"Articles:\n{json.dumps(article_summaries, ensure_ascii=False, indent=2)}"
     )
 
@@ -241,8 +289,12 @@ def generate_post(
     """Generate a Telegram post draft and category for a single article."""
     system_prompt = (
         "You are the editor of a Russian-language Telegram channel about "
-        "PropTech and ConTech. Write concise, businesslike Russian text "
-        "without markdown. Return only a JSON object of the form "
+        "PropTech and ConTech. Write natural Russian that sounds like a human "
+        "editor, not like a corporate AI assistant. Avoid first-person voice "
+        "and never write from 'I', 'we', or 'our' perspective. Focus on "
+        "technology, implementation details, constraints, and operational "
+        "impact. Do not turn the post into a funding, PR, or business-roundup "
+        "note. Avoid markdown. Return only a JSON object of the form "
         '{"text":"...","category":"..."} '
         f"where category is one of {', '.join(ALLOWED_CATEGORIES)}."
     )
@@ -251,14 +303,19 @@ def generate_post(
     if feedback:
         feedback_block = "\nFix the previous issues:\n- " + "\n- ".join(feedback)
 
+    style_brief = _style_brief_for_article(article)
     user_prompt = (
         "Write a Telegram post in Russian based on the article.\n"
         "Requirements:\n"
-        "- 150-300 words, maximum 400\n"
-        "- structure: fact/event -> why it matters -> what it means for the market\n"
-        "- 1-2 topic-relevant emojis at the beginning\n"
+        "- 130-260 words, maximum 400\n"
+        "- structure: concrete technical shift -> why it matters in practice -> limitation, trade-off, or next implication\n"
+        "- write with a human rhythm; vary sentence length and avoid template phrasing\n"
+        "- no first-person voice and no collective voice ('I', 'we', 'our')\n"
+        "- no focus on investments, funding rounds, valuations, or deal gossip\n"
+        "- optional emoji is allowed, but only if it feels natural and topic-relevant\n"
         "- no markdown (#, **, __)\n"
         f"- must end with the source URL: {article.get('url', '')}\n\n"
+        f"{style_brief}\n\n"
         f"Article:\n{json.dumps(article, ensure_ascii=False, indent=2)}"
         f"{feedback_block}"
     )
@@ -293,6 +350,9 @@ def validate_post(post_text: str, source_url: str) -> list[str]:
 
     if any(marker in post_text for marker in ("#", "**", "__")):
         errors.append("post contains markdown formatting")
+
+    if FIRST_PERSON_PATTERN.search(post_text):
+        errors.append("post contains first-person voice")
 
     return errors
 

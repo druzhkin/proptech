@@ -31,3 +31,22 @@ def test_parse_perplexity_response_splits_numbered_sections() -> None:
     assert articles[0]["url"] == "https://example.com/alpha"
     assert articles[0]["source_name"] == "Alpha"
     assert articles[1]["url"] == "https://example.com/beta"
+
+
+def test_parse_perplexity_response_rejects_limitation_meta_answer() -> None:
+    """Perplexity limitation text should not be treated as a real article batch."""
+    response_json = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        "My knowledge cutoff is April 2024. "
+                        "I cannot complete this request with current news."
+                    )
+                }
+            }
+        ],
+        "citations": [],
+    }
+
+    assert perplexity_client.parse_perplexity_response(response_json) == []

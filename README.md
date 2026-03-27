@@ -1,82 +1,55 @@
 # PropTech Pipeline
 
-Контент-пайплайн для Telegram-канала о PropTech.
+Telegram content pipeline for a PropTech / ConTech channel.
 
-Сейчас в репозитории реально реализованы:
-- сбор контента через Perplexity и YouTube
-- генерация черновиков через OpenRouter
-- единый entry point `python pipeline.py` для `collect -> generate`
-- Telegram review/publish bot поверх `data/drafts`
+## What it does
 
-Пока не реализованы полностью:
-- полноценная end-to-end проверка live publish path в реальный канал
-- автоматический запуск `bot.py` как managed service/daemon
+- collects source material from Perplexity and YouTube
+- filters out finance-first noise before generation
+- generates Russian draft posts through OpenRouter
+- lets a Telegram channel admin review, edit, skip, and publish drafts
 
-## Быстрый старт
+## Editorial policy
+
+- focus on technology, deployment, automation, tools, robotics, BIM, digital twins
+- do not write about funding rounds, valuations, M&A, or generic business gossip
+- generated posts should sound like human editorial notes, not like AI boilerplate
+- drafts avoid first-person voice such as "I", "we", or "our"
+
+## Main commands
 
 ```bash
-# Установить зависимости
 pip install -r requirements.txt
-
-# Заполнить API ключи
-cp config/.env.example config/.env
-# Отредактировать config/.env
-
-# Найти YouTube channel IDs (одноразово)
 python src/find_channels.py
-
-# Собрать новости
 python src/collect.py
-
-# Сгенерировать черновики из собранных статей
 python src/generate.py --max 5
-
-# Полный текущий пайплайн
 python pipeline.py
-
-# Запустить review/publish bot
 python src/bot.py
+python src/bot.py --once
 ```
 
-## Команды
+## Data flow
 
-| Команда | Описание |
-|---------|----------|
-| `python src/find_channels.py` | Поиск YouTube channel_id по названиям |
-| `python src/collect.py` | Сбор из всех источников |
-| `python src/collect.py --engine perplexity` | Только Perplexity |
-| `python src/collect.py --engine youtube` | Только YouTube |
-| `python src/generate.py --max 5` | Генерация до 5 черновиков из собранных статей |
-| `python pipeline.py` | Последовательно запускает `collect -> generate` |
-| `python src/bot.py` | Admin-only review/publish bot для `/drafts` и `/status` |
-| `python src/bot.py --once` | Однократный poll-cycle для smoke/fail-fast проверки |
+- `src/collect.py` writes source-backed articles to `data/articles/YYYY-MM-DD.json`
+- `src/generate.py` writes `draft|rejected|published|skipped` records to `data/drafts/YYYY-MM-DD.json`
+- `src/bot.py` writes published records to `data/published/YYYY-MM-DD.json`
+- `logs/` stores daily pipeline logs
 
-## Структура
+## Configuration
 
-```
-config/     — конфигурация (ключи, каналы, промпты, evergreen topics)
-src/        — код сбора, генерации и Telegram review bot
-data/       — articles/, drafts/ и published/ по дням
-logs/       — ежедневные pipeline-логи
-```
+Set variables in `config/.env` and never commit that file.
 
-## Источники
+- `PERPLEXITY_API_KEY` for Perplexity collection
+- `YOUTUBE_API_KEY` for YouTube collection
+- `OPENROUTER_API_KEY` for draft generation
+- `OPENROUTER_MODEL` optional model override, default `anthropic/claude-sonnet-4`
+- `TG_BOT_TOKEN` for the review bot
+- `TG_CHANNEL_ID` target channel username or numeric chat id
+- `TG_ADMIN_ID` optional pinned Telegram user id; if omitted, the bot authorizes real channel administrators dynamically through Telegram `getChatMember`
 
-- **Perplexity API** (sonar-deep-research) — глубокий поиск новостей PropTech за неделю
-- **YouTube Data API v3** — мониторинг каналов + транскрипты видео
-- **OpenRouter API** — фильтрация статей и генерация Telegram-черновиков
-- **Telegram Bot API** — admin review/publish flow через long polling
+## Important limits
 
-## Что создаётся на диске
-
-- `data/articles/YYYY-MM-DD.json` — собранные статьи в unified schema
-- `data/drafts/YYYY-MM-DD.json` — draft/rejected/published/skipped записи ревью-цикла
-- `data/published/YYYY-MM-DD.json` — опубликованные записи с `telegram_message_id`
-- `logs/pipeline-YYYY-MM-DD.log` — ежедневный лог для CLI-проходов
-
-## Важные ограничения
-
-- `generate.py` требует `OPENROUTER_API_KEY`; без него скрипт fail-fast-ится понятной ошибкой
-- `bot.py` требует `TG_BOT_TOKEN`, `TG_CHANNEL_ID`, `TG_ADMIN_ID`; без них бот не стартует
-- evergreen fallback в `collect.py` сейчас создаёт placeholder-темы, а не source-backed статьи
-- live publish в этом окружении пока не подтверждён реальными Telegram credentials
+- `generate.py` fails fast without `OPENROUTER_API_KEY`
+- `bot.py` fails fast without `TG_BOT_TOKEN` and `TG_CHANNEL_ID`
+- YouTube transcript collection can still be affected by IP blocking
+- Railway deployment is currently best suited for the long-running review bot; collection and generation can still be run manually or by a separate scheduled service

@@ -61,3 +61,13 @@ def test_validate_post_reports_link_and_markdown_errors() -> None:
 
     assert "post is missing the source URL" in errors
     assert "post contains markdown formatting" in errors
+
+
+def test_validate_post_rejects_first_person_voice() -> None:
+    """Posts should not be written from the author's first-person perspective."""
+    errors = claude_client.validate_post(
+        "\u041c\u044b \u0432\u0438\u0434\u0438\u043c, \u043a\u0430\u043a BIM-\u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442 \u0443\u0441\u043a\u043e\u0440\u044f\u0435\u0442 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0443. https://example.com/source",
+        "https://example.com/source",
+    )
+
+    assert "post contains first-person voice" in errors

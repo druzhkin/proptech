@@ -125,3 +125,50 @@ def test_publish_draft_falls_back_to_text_when_photo_send_fails() -> None:
     assert client.messages[0][0] == "777"
     assert "без изображения" in client.messages[0][1]
     assert client.messages[1] == ("@proptech_channel", "Final text for channel")
+
+
+def test_required_env_vars_make_admin_optional() -> None:
+    """The bot should require only bot token and channel id at startup."""
+    assert bot._required_env_vars() == ["TG_BOT_TOKEN", "TG_CHANNEL_ID"]  # noqa: SLF001
+
+
+def test_ensure_authorized_accepts_channel_admin_without_pinned_admin() -> None:
+    """When TG_ADMIN_ID is absent, a real channel admin should still be authorized."""
+
+    class FakeClient:
+        def get_chat_member(self, chat_id: str, user_id: str) -> dict[str, str]:
+            assert chat_id == "@proptech_channel"
+            assert user_id == "42"
+            return {"status": "administrator"}
+
+    authorized_users: set[str] = set()
+    is_allowed = bot._ensure_authorized(  # noqa: SLF001
+        {"message": {"from": {"id": 42}}},
+        client=FakeClient(),  # type: ignore[arg-type]
+        admin_id=None,
+        channel_id="@proptech_channel",
+        authorized_users=authorized_users,
+    )
+
+    assert is_allowed is True
+    assert "42" in authorized_users
+
+
+def test_ensure_authorized_rejects_non_admin_without_pinned_admin() -> None:
+    """A non-admin should not be able to control the review bot."""
+
+    class FakeClient:
+        def get_chat_member(self, chat_id: str, user_id: str) -> dict[str, str]:
+            assert chat_id == "@proptech_channel"
+            assert user_id == "51"
+            return {"status": "member"}
+
+    is_allowed = bot._ensure_authorized(  # noqa: SLF001
+        {"message": {"from": {"id": 51}}},
+        client=FakeClient(),  # type: ignore[arg-type]
+        admin_id=None,
+        channel_id="@proptech_channel",
+        authorized_users=set(),
+    )
+
+    assert is_allowed is False

@@ -26,6 +26,8 @@ DRAFTS_DIR = PROJECT_ROOT / "data" / "drafts"
 PUBLISHED_DIR = PROJECT_ROOT / "data" / "published"
 
 PendingEdits = MutableMapping[str, dict[str, str]]
+AuthorizedUsers = set[str]
+AUTHORIZED_CHANNEL_STATUSES = {"administrator", "creator"}
 
 
 class ExitCode(IntEnum):
@@ -415,6 +417,15 @@ class TelegramClient:
         result = self._request("getUpdates", payload)
         return result if isinstance(result, list) else []
 
+    def get_chat_member(self, chat_id: str | int, user_id: str | int) -> dict[str, Any]:
+        """Fetch a member record for a Telegram chat."""
+        payload = {
+            "chat_id": str(chat_id),
+            "user_id": str(user_id),
+        }
+        result = self._request("getChatMember", payload)
+        return result if isinstance(result, dict) else {}
+
     def send_message(
         self,
         chat_id: str | int,
@@ -558,10 +569,51 @@ def _safe_notify_admin(client: TelegramClient, admin_chat_id: str | int, text: s
         logger.exception("Failed to notify admin chat %s", admin_chat_id)
 
 
-def _ensure_authorized(update: dict[str, Any], admin_id: str) -> bool:
-    """Return whether the update belongs to the configured admin."""
+def _is_channel_admin(
+    client: TelegramClient,
+    *,
+    channel_id: str,
+    user_id: str,
+) -> bool:
+    """Return whether a Telegram user is an admin of the configured channel."""
+    try:
+        member = client.get_chat_member(channel_id, user_id)
+    except Exception:
+        logger.exception("Failed to resolve Telegram channel membership for user %s", user_id)
+        return False
+
+    status = str(member.get("status", "")).strip().lower()
+    return status in AUTHORIZED_CHANNEL_STATUSES
+
+
+def _ensure_authorized(
+    update: dict[str, Any],
+    *,
+    client: TelegramClient,
+    admin_id: str | None,
+    channel_id: str,
+    authorized_users: AuthorizedUsers,
+) -> bool:
+    """Return whether the update belongs to the configured or inferred admin."""
     user_id = _update_user_id(update)
-    if user_id == admin_id:
+    if not user_id:
+        logger.warning("Ignoring update without a resolvable user id")
+        return False
+
+    if admin_id:
+        if user_id == admin_id:
+            authorized_users.add(user_id)
+            return True
+
+        logger.warning("Ignoring update from unauthorized user %s", user_id)
+        return False
+
+    if user_id in authorized_users:
+        return True
+
+    if _is_channel_admin(client, channel_id=channel_id, user_id=user_id):
+        authorized_users.add(user_id)
+        logger.info("Authorized Telegram user %s via channel admin lookup", user_id)
         return True
 
     logger.warning("Ignoring update from unauthorized user %s", user_id or "unknown")
@@ -771,12 +823,19 @@ def handle_update(
     client: TelegramClient,
     update: dict[str, Any],
     *,
-    admin_id: str,
+    admin_id: str | None,
     channel_id: str,
     pending_edits: PendingEdits,
+    authorized_users: AuthorizedUsers,
 ) -> None:
     """Dispatch a Telegram update to the correct handler."""
-    if not _ensure_authorized(update, admin_id):
+    if not _ensure_authorized(
+        update,
+        client=client,
+        admin_id=admin_id,
+        channel_id=channel_id,
+        authorized_users=authorized_users,
+    ):
         callback_query = update.get("callback_query")
         if isinstance(callback_query, dict) and callback_query.get("id"):
             try:
@@ -810,7 +869,7 @@ def handle_update(
 
 def _required_env_vars() -> list[str]:
     """Return env vars required to run the Telegram bot safely."""
-    return ["TG_BOT_TOKEN", "TG_CHANNEL_ID", "TG_ADMIN_ID"]
+    return ["TG_BOT_TOKEN", "TG_CHANNEL_ID"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -838,13 +897,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     bot_token = os.getenv("TG_BOT_TOKEN", "")
     channel_id = str(os.getenv("TG_CHANNEL_ID", "")).strip()
-    admin_id = str(os.getenv("TG_ADMIN_ID", "")).strip()
+    admin_id = str(os.getenv("TG_ADMIN_ID", "")).strip() or None
 
     client = TelegramClient(bot_token)
     pending_edits: PendingEdits = {}
+    authorized_users: AuthorizedUsers = {admin_id} if admin_id else set()
     offset: int | None = None
 
-    logger.info("Bot started for admin %s", admin_id)
+    if admin_id:
+        logger.info("Bot started for pinned admin %s", admin_id)
+    else:
+        logger.info(
+            "Bot started without TG_ADMIN_ID; channel administrator lookup auth is enabled"
+        )
     while True:
         try:
             updates = client.get_updates(offset=offset, timeout=20)
@@ -867,6 +932,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     admin_id=admin_id,
                     channel_id=channel_id,
                     pending_edits=pending_edits,
+                    authorized_users=authorized_users,
                 )
             except Exception as exc:
                 logger.exception("Failed to handle update %s", update_id)

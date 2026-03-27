@@ -25,6 +25,14 @@ PROMPT_PATH = PROJECT_ROOT / "config" / "prompt.md"
 
 PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
 TRANSIENT_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+LIMITATION_RESPONSE_MARKERS = (
+    "knowledge cutoff",
+    "нет доступа к telegram",
+    "нет доступа к real-time",
+    "не могу выполнить этот запрос",
+    "не могу генерировать вымышленные новости",
+    "what i can offer instead",
+)
 
 
 def _load_prompt() -> str:
@@ -51,9 +59,12 @@ def _call_perplexity(api_key: str, prompt: str) -> dict[str, Any]:
             {
                 "role": "system",
                 "content": (
-                    "Ты исследователь PropTech и ConTech. "
-                    "Отвечай структурированно, каждая новость пронумерована, "
-                    "с обязательной ссылкой."
+                    "You are a PropTech and ConTech researcher using live web search. "
+                    "Return only current source-backed stories from the last 7 days, "
+                    "with numbered items and citations. Never answer with "
+                    "knowledge-cutoff disclaimers, capability disclaimers, or "
+                    "generic limitation text. If a story cannot be verified with "
+                    "a source, skip it."
                 ),
             },
             {"role": "user", "content": prompt},
@@ -81,6 +92,12 @@ def _call_perplexity(api_key: str, prompt: str) -> dict[str, Any]:
     )
 
 
+def _looks_like_limitation_response(content: str) -> bool:
+    """Detect meta-answers that describe model limitations instead of news."""
+    text = content.lower()
+    return any(marker in text for marker in LIMITATION_RESPONSE_MARKERS)
+
+
 def parse_perplexity_response(response_json: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Parse Perplexity response into a list of article dicts.
@@ -93,6 +110,10 @@ def parse_perplexity_response(response_json: dict[str, Any]) -> list[dict[str, A
         content = response_json["choices"][0]["message"]["content"]
     except (KeyError, IndexError):
         logger.error("Unexpected Perplexity response structure")
+        return []
+
+    if _looks_like_limitation_response(str(content)):
+        logger.error("Perplexity returned a limitation/meta response instead of news")
         return []
 
     citations = response_json.get("citations", [])

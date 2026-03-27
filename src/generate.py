@@ -7,6 +7,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import uuid
 from collections.abc import Callable, Sequence
@@ -26,6 +27,77 @@ DRAFTS_DIR = PROJECT_ROOT / "data" / "drafts"
 
 FilterArticlesCallable = Callable[..., list[dict[str, Any]]]
 GenerateValidatedCallable = Callable[..., tuple[dict[str, str], list[str]]]
+TECH_SIGNAL_KEYWORDS = (
+    "ai",
+    "automation",
+    "robot",
+    "bim",
+    "digital twin",
+    "iot",
+    "sensor",
+    "computer vision",
+    "workflow",
+    "software",
+    "platform",
+    "tool",
+    "deployment",
+    "launched",
+    "rollout",
+    "integration",
+    "simulation",
+    "design",
+    "prefab",
+    "modular",
+    "3d print",
+    "drone",
+    "\u0438\u0438",
+    "\u0440\u043e\u0431\u043e\u0442",
+    "\u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0437",
+    "\u0446\u0438\u0444\u0440\u043e\u0432",
+    "\u0434\u0430\u0442\u0447\u0438\u043a",
+    "\u0438\u043d\u0442\u0435\u0433\u0440\u0430\u0446",
+    "\u043c\u043e\u0434\u0435\u043b",
+    "\u043f\u043b\u0430\u0442\u0444\u043e\u0440\u043c",
+    "\u0434\u0432\u043e\u0439\u043d\u0438\u043a",
+    "\u0441\u0438\u0441\u0442\u0435\u043c",
+    "\u0441\u0442\u0440\u043e\u0439\u043a",
+    "\u044d\u043a\u0441\u043f\u043b\u0443\u0430\u0442\u0430\u0446",
+)
+BUSINESS_NOISE_KEYWORDS = (
+    "funding",
+    "raised",
+    "raises",
+    "series a",
+    "series b",
+    "series c",
+    "seed round",
+    "venture",
+    "valuation",
+    "investor",
+    "investment",
+    "m&a",
+    "merger",
+    "acquisition",
+    "ipo",
+    "round",
+    "fundraise",
+    "\u0440\u0430\u0443\u043d\u0434",
+    "\u0438\u043d\u0432\u0435\u0441\u0442",
+    "\u043e\u0446\u0435\u043d\u043a",
+    "\u0441\u0434\u0435\u043b\u043a",
+    "\u043f\u043e\u0433\u043b\u043e\u0449",
+    "\u043f\u0440\u0438\u0432\u043b\u0435\u043a",
+    "\u0432\u0435\u043d\u0447\u0443\u0440",
+)
+INVALID_SOURCE_MARKERS = (
+    "knowledge cutoff",
+    "what i can offer instead",
+    "honest answer",
+    "\u043d\u0435 \u043c\u043e\u0433\u0443 \u0432\u044b\u043f\u043e\u043b\u043d\u0438\u0442\u044c \u044d\u0442\u043e\u0442 \u0437\u0430\u043f\u0440\u043e\u0441",
+    "\u043d\u0435\u0442 \u0434\u043e\u0441\u0442\u0443\u043f\u0430 \u043a telegram",
+    "\u043d\u0435 \u043c\u043e\u0433\u0443 \u0433\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0432\u044b\u043c\u044b\u0448\u043b\u0435\u043d\u043d\u044b\u0435 \u043d\u043e\u0432\u043e\u0441\u0442\u0438",
+    "\u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0438\u044f \u0438 \u0447\u0435\u0441\u0442\u043d\u044b\u0439 \u043e\u0442\u0432\u0435\u0442",
+)
 
 
 class ExitCode(IntEnum):
@@ -94,6 +166,40 @@ def load_articles(requested_date: str | None = None) -> tuple[str, list[dict[str
 def _is_evergreen_placeholder(article: dict[str, Any]) -> bool:
     """Check whether an article is an evergreen fallback placeholder."""
     return str(article.get("url", "")).startswith("evergreen://")
+
+
+def _article_blob(article: dict[str, Any]) -> str:
+    """Flatten the main searchable article fields into one lowercase string."""
+    return " ".join(
+        str(article.get(field, ""))
+        for field in ("title", "text", "category_hint", "source_name", "url")
+    ).lower()
+
+
+def _contains_keyword(text: str, keyword: str) -> bool:
+    """Match short keywords strictly and longer ones as substrings."""
+    normalized_keyword = keyword.lower()
+    if len(normalized_keyword) <= 3 and normalized_keyword.isalpha():
+        return re.search(rf"\b{re.escape(normalized_keyword)}\b", text) is not None
+    return normalized_keyword in text
+
+
+def _is_business_noise(article: dict[str, Any]) -> bool:
+    """Reject finance-first stories unless they also contain strong tech signals."""
+    text = _article_blob(article)
+    has_business_noise = any(_contains_keyword(text, keyword) for keyword in BUSINESS_NOISE_KEYWORDS)
+    has_tech_signal = any(_contains_keyword(text, keyword) for keyword in TECH_SIGNAL_KEYWORDS)
+    return has_business_noise and not has_tech_signal
+
+
+def _editorial_rejection_reason(article: dict[str, Any]) -> str | None:
+    """Return the editorial rejection reason for an article, if any."""
+    text = _article_blob(article)
+    if any(marker in text for marker in INVALID_SOURCE_MARKERS):
+        return "invalid_source_content"
+    if _is_business_noise(article):
+        return "editorial_policy_non_technical_or_investment"
+    return None
 
 
 def _build_draft_record(
@@ -199,6 +305,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         for article in articles
         if not _is_evergreen_placeholder(article)
     ]
+    editorial_rejected_records: list[dict[str, Any]] = []
+    eligible_articles: list[dict[str, Any]] = []
+    for article in source_backed_articles:
+        rejection_reason = _editorial_rejection_reason(article)
+        if rejection_reason:
+            editorial_rejected_records.append(
+                _build_draft_record(
+                    article,
+                    status="rejected",
+                    rejection_reason=rejection_reason,
+                )
+            )
+            continue
+        eligible_articles.append(article)
 
     filter_articles, generate_validated_post = _load_claude_client()
 
@@ -219,9 +339,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             return ExitCode.PARTIAL_FAILURE
         return ExitCode.FAILURE
 
+    if editorial_rejected_records:
+        logger.info(
+            "Rejected %d finance-first articles due to editorial policy",
+            len(editorial_rejected_records),
+        )
+
+    if not eligible_articles:
+        logger.warning("No source-backed articles passed the editorial policy")
+        all_rejected_records = rejected_records + editorial_rejected_records
+        if all_rejected_records:
+            draft_path = save_drafts(articles_date, all_rejected_records)
+            logger.info(
+                "Saved %d rejected records to %s",
+                len(all_rejected_records),
+                draft_path,
+            )
+            return ExitCode.PARTIAL_FAILURE
+        return ExitCode.FAILURE
+
     selected_articles = filter_articles(
         api_key,
-        source_backed_articles,
+        eligible_articles,
         max_items=args.max,
     )
     logger.info("Selected %d articles for generation", len(selected_articles))
@@ -263,7 +402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
 
-    all_records = draft_records + rejected_records
+    all_records = draft_records + rejected_records + editorial_rejected_records
     if all_records:
         draft_path = save_drafts(articles_date, all_records)
         logger.info("Saved %d draft records to %s", len(all_records), draft_path)

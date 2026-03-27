@@ -256,3 +256,49 @@
 - OpenRouter здесь не “новая фича”, а замена transport/provider layer: промпты, валидация и fallback-selection остались прежними
 - Утечек credentials не добавлено; provider key теперь берётся только из `OPENROUTER_API_KEY`
 - Residual risk: OpenRouter transport и production key path в этом окружении уже подтверждены, но качество генерации всё ещё зависит от конкретной модели, лимитов аккаунта и внешней доступности провайдера; кроме того, сам ключ после публикации в чате нужно считать скомпрометированным и перевыпустить
+
+## Итерация 7 — 2026-03-27
+
+### Цель итерации
+
+Перевести проект из “технически работает” в более честный редакторский и operational MVP: ужесточить редакционную политику по технологиям, убрать зависимость бота от ручного `TG_ADMIN_ID` и подготовить живой deployment-контур.
+
+### Задачи
+
+- [x] TASK-1: Ужесточить editorial policy в `src/generate.py`, `src/claude_client.py` и `config/prompt.md`, чтобы в drafts попадали технологические кейсы, а не раунды, сделки и рыночный шум — агент: Coder
+- [x] TASK-2: Сделать `src/bot.py` работоспособным без обязательного `TG_ADMIN_ID` через безопасную проверку администратора канала в Telegram API — агент: Coder
+- [x] TASK-3: Добавить/обновить `pytest`-покрытие для editorial filtering, human-style validation и нового Telegram auth path — агент: Tester
+- [ ] TASK-4: Проверить live-контур с реальными Telegram credentials и попытаться привязать/deploy-нуть Railway service без коммита секретов — агент: Critic
+- [x] TASK-5: Обновить `README.md`, `config/.env.example` и журнал итерации по итогам фактического результата — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ tests/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -v --tb=short` проходит для обновлённого набора тестов
+- [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+- [x] smoke-тест: `python -c "from src.bot import main; print('bot OK')"`
+
+### Замечания по объёму
+
+- Railway deployment не закрыт не из-за кода, а из-за невалидного `RAILWAY_TOKEN`: CLI возвращает `Invalid RAILWAY_TOKEN`, поэтому живой деплой в этом цикле честно не подтверждён
+- В `data/articles/2026-03-27.json` уже лежали мусорные Perplexity-ответы из прошлого прогона; данные не удалялись, но generation теперь умеет отбрасывать такие записи как `invalid_source_content`
+
+### Лог работ
+
+- [CODE] `src/claude_client.py`: generation prompt переписан под более человеческий русский тон без first-person voice, с вариативными style profiles и жёстким запретом на funding-round / PR-driven фокус
+- [CODE] `src/generate.py`: добавлен editorial prefilter для finance-first и invalid-source статей; такие записи получают `rejected` вместо попадания в drafts
+- [CODE] `src/perplexity_client.py`, `config/prompt.md`: upstream prompt и Perplexity system prompt усилены под live web search; limitation/meta-ответы теперь распознаются и не считаются новостями
+- [CODE] `src/bot.py`: `TG_ADMIN_ID` стал optional; если он не задан, бот авторизует реальных администраторов канала через Telegram `getChatMember`
+- [CODE] `README.md`, `CLAUDE.md`, `config/.env.example`, `Procfile`: документация и deployment hints выровнены под editorial policy, dynamic Telegram auth и Railway worker start
+- [TEST] `tests/test_bot.py`, `tests/test_claude_client.py`, `tests/test_generate.py`, `tests/test_perplexity_client.py`: добавлены тесты на first-person validation, editorial reject path, invalid-source filtering и новый Telegram auth path
+- [CRITIC] Прогнаны quality gates: `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -v --tb=short`, `python -c "from src.generate import main; print('generate OK')"`, `python -c "from src.bot import main; print('bot OK')"`
+- [CRITIC] Live-check: `python src/collect.py --engine perplexity` создал свежий batch `data/articles/2026-03-27.json`; `python src/generate.py --date 2026-03-27 --max 5` дал `drafts=5 rejected=4`; `python src/bot.py --once` успешно стартует с `TG_BOT_TOKEN` и `TG_CHANNEL_ID` даже без `TG_ADMIN_ID`
+- [CRITIC] Railway-check: `railway status` и `railway variable list` с предоставленным токеном завершаются `Invalid RAILWAY_TOKEN`, поэтому live deploy не выполнен
+
+### Ретроспектива итерации 7
+
+- Проект перестал быть “генератором всего подряд”: finance-first и мусорные meta-ответы теперь отсекаются до генерации, а в live batch реально попали технологические кейсы по 3D-печати, модульному строительству и геодезическим дронам
+- Telegram operational gap заметно сократился: bot больше не требует ручного поиска `TG_ADMIN_ID`, если пользователь действительно админ целевого канала
+- Самый неприятный runtime-баг этой итерации был не в OpenRouter, а в upstream collection: Perplexity один раз вернул limitation text вместо новостей; теперь такой ответ не маскируется под “успешный сбор”
+- Residual risk: Railway deployment остаётся неподтверждённым, пока не будет рабочего токена или project access; кроме того, уже опубликованные в чате Telegram/OpenRouter secrets нужно считать скомпрометированными и перевыпустить
