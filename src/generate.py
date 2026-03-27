@@ -392,6 +392,32 @@ def _build_draft_record(
     }
 
 
+def _load_existing_draft_records(drafts_date: str) -> list[dict[str, Any]]:
+    """Load existing draft records for a date if the batch file already exists."""
+    file_path = DRAFTS_DIR / f"{drafts_date}.json"
+    if not file_path.exists():
+        return []
+
+    with file_path.open("r", encoding="utf-8") as file_obj:
+        loaded = json.load(file_obj)
+    if not isinstance(loaded, list):
+        raise ValueError("Drafts file must contain a list")
+    return [record for record in loaded if isinstance(record, dict)]
+
+
+def _selection_blocked_article_ids(records: Sequence[dict[str, Any]]) -> set[str]:
+    """Return article IDs that should not consume new selection slots."""
+    blocked_ids: set[str] = set()
+    for record in records:
+        article_id = str(record.get("article_id", "")).strip()
+        if not article_id:
+            continue
+        status = str(record.get("status", "")).strip()
+        if status in {"draft", "published", "skipped"} or bool(record.get("edited_by_admin")):
+            blocked_ids.add(article_id)
+    return blocked_ids
+
+
 def save_drafts(drafts_date: str, new_records: list[dict[str, Any]]) -> str:
     """Save draft records and preserve terminal/admin-reviewed entries on reruns."""
     DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -433,7 +459,12 @@ def save_drafts(drafts_date: str, new_records: list[dict[str, Any]]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the draft generation workflow and return a process exit code."""
     parser = argparse.ArgumentParser(description="PropTech draft generator")
-    parser.add_argument("--max", type=int, default=5, help="Maximum number of drafts to generate")
+    parser.add_argument(
+        "--max",
+        type=int,
+        default=None,
+        help="Maximum number of drafts to generate (default: all eligible articles)",
+    )
     parser.add_argument("--date", default=None, help="Specific article date (YYYY-MM-DD)")
     args = parser.parse_args(argv)
 
@@ -451,6 +482,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         articles_date, articles = load_articles(args.date)
     except Exception:
         logger.exception("Failed to load collected articles for generation")
+        return ExitCode.FAILURE
+
+    try:
+        existing_records = _load_existing_draft_records(articles_date)
+    except Exception:
+        logger.exception("Failed to load existing draft batch for %s", articles_date)
         return ExitCode.FAILURE
 
     logger.info("Loaded %d articles from %s", len(articles), articles_date)
@@ -523,6 +560,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
         )
 
+    blocked_article_ids = _selection_blocked_article_ids(existing_records)
+    draftable_articles = [
+        article
+        for article in eligible_articles
+        if str(article.get("id", "")).strip() not in blocked_article_ids
+    ]
+    if blocked_article_ids:
+        logger.info(
+            "Excluded %d already-queued or terminal article IDs from new selection slots",
+            len(blocked_article_ids),
+        )
+
     if not eligible_articles:
         logger.warning("No source-backed articles passed the editorial policy")
         all_rejected_records = rejected_records + editorial_rejected_records
@@ -536,9 +585,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             return ExitCode.PARTIAL_FAILURE
         return ExitCode.FAILURE
 
+    if not draftable_articles:
+        logger.info(
+            "No new draftable articles remain after excluding existing draft/published/skipped items"
+        )
+        all_rejected_records = rejected_records + editorial_rejected_records
+        if all_rejected_records:
+            draft_path = save_drafts(articles_date, all_rejected_records)
+            logger.info(
+                "Saved %d rejected records to %s while keeping the existing queue intact",
+                len(all_rejected_records),
+                draft_path,
+            )
+        existing_draft_count = sum(
+            str(record.get("status", "")).strip() == "draft"
+            for record in existing_records
+        )
+        return ExitCode.SUCCESS if existing_draft_count else ExitCode.PARTIAL_FAILURE
+
     selected_articles = filter_articles(
         api_key,
-        eligible_articles,
+        draftable_articles,
         max_items=args.max,
     )
     logger.info("Selected %d articles for generation", len(selected_articles))

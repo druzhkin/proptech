@@ -406,3 +406,36 @@
 - Главная проблема была не только в “скучных статьях”, а в том, что сам пайплайн не знал, для кого он ранжирует контент; без явной CIO-модели он естественно скатывался в общий proptech noise
 - Новый слой сделал отбор более честным: installable AI/tooling, GitHub/open-source и реальные workflow changes теперь имеют отдельный приоритет вместо попытки вытащить это только prompt'ом
 - Residual risk: даже после этого часть live batch'ей всё ещё может уходить в generic “рынок растёт” или vendor PR, потому что upstream сбор ограничен Perplexity/YouTube; если захочется стабильно получать GitHub project reviews, следующим шагом лучше делать отдельный curated tool-radar source, а не пытаться выжать всё из новостного поиска
+
+## Итерация 11 — 2026-03-27
+
+### Цель итерации
+
+Убрать искусственно короткую draft-очередь: генератор должен делать черновики по всем интересным новостям, а не по произвольному маленькому лимиту и не за счёт слотов, уже занятых опубликованными или пропущенными статьями.
+
+### Задачи
+
+- [x] TASK-1: Переписать selection flow так, чтобы по умолчанию генерировались все eligible статьи, а `--max` был только опциональным ограничителем — агент: Coder
+- [x] TASK-2: Исключить из новых selection slots статьи, уже находящиеся в `draft/published/skipped` или admin-locked статусах, чтобы терминальные решения не “съедали” очередь — агент: Coder
+- [x] TASK-3: Добавить regression tests на full-queue generation и на защиту от схлопывания очереди из-за merge-логики — агент: Tester
+- [x] TASK-4: Прогнать quality gates, проверить локальный и remote generate flow и зафиксировать результат — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ tests/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -q` проходит
+- [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+
+### Лог работы
+
+- [CODE] `src/generate.py`: генерация больше не ограничена default `5`; без явного `--max` в queue идут все eligible статьи, а selection теперь сначала выкидывает `draft/published/skipped` и admin-locked article IDs из новых selection slots
+- [CODE] `src/claude_client.py`: `filter_articles()` теперь умеет работать без лимита и в таком режиме возвращает весь eligible набор по editorial-priority order вместо искусственного урезания
+- [TEST] `tests/test_generate.py`, `tests/test_claude_client.py`: добавлены тесты на full-queue generation без `--max`, на исключение terminal records из selection slots и на поведение filter layer без лимита
+- [CRITIC] Прогнаны `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -q` (`48 passed`), `python -c "from src.generate import main; print('generate OK')"`
+
+### Ретроспектива итерации 11
+
+- Пользовательская критика была точной: проблема была не только в editorial bar, а в самой архитектуре очереди; генератор раньше создавал “короткий showcase”, а не полный review backlog
+- Основной дефект был двойной: default `--max=5` и то, что уже опубликованные/пропущенные записи продолжали занимать selection slots до merge, из-за чего pending queue могла схлопываться до `3` даже при большем количестве интересных историй
+- Residual risk: even after this change количество draft'ов всё ещё ограничено качеством upstream articles; если свежий batch бедный или однотипный, queue будет честно короткой, а не искусственно раздуваться мусором

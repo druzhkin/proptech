@@ -381,6 +381,172 @@ def test_main_rejects_articles_that_do_not_fit_cio_radar(monkeypatch, tmp_path) 
     )
 
 
+def test_main_generates_all_eligible_articles_when_max_is_unset(monkeypatch, tmp_path) -> None:
+    """Without --max, generation should create drafts for every eligible article."""
+    articles_dir = tmp_path / "articles"
+    drafts_dir = tmp_path / "drafts"
+    articles_dir.mkdir(parents=True, exist_ok=True)
+    drafts_dir.mkdir(parents=True, exist_ok=True)
+
+    articles = []
+    for index in range(1, 8):
+        articles.append(
+            {
+                "id": f"article-{index}",
+                "source_type": "perplexity",
+                "source_name": "Perplexity",
+                "title": f"AI planning workflow {index}",
+                "url": f"https://example.com/{index}",
+                "text": "AI planning workflow integrates with BIM and scheduling.",
+                "image_url": None,
+                "date": "2026-03-27",
+                "category_hint": "automation",
+                "collected_at": "2026-03-27T00:00:00+00:00",
+            }
+        )
+
+    (articles_dir / "2026-03-27.json").write_text(
+        json.dumps(articles),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(generate, "ARTICLES_DIR", articles_dir)
+    monkeypatch.setattr(generate, "DRAFTS_DIR", drafts_dir)
+    monkeypatch.setattr(generate, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        generate,
+        "_load_logging_setup",
+        lambda: (lambda _project_root: tmp_path / "logs" / "pipeline-2026-03-27.log"),
+    )
+    monkeypatch.setattr(
+        generate,
+        "_load_claude_client",
+        lambda: (
+            lambda _api_key, selected_articles, max_items=None: list(selected_articles),
+            lambda _api_key, article: (
+                {
+                    "text": f"Useful draft with link {article['url']}",
+                    "category": "Automation",
+                },
+                [],
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        generate,
+        "_load_editorial_policy",
+        lambda: (
+            lambda _article: {
+                "score": 8,
+                "track_ids": ["bim_and_digital_twin"],
+                "track_labels": ["BIM, design tools, digital twins, and data layers"],
+                "business_function_ids": ["construction"],
+                "business_functions": ["construction"],
+                "angle": "Focus on the workflow shift.",
+            }
+        ),
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "token")
+
+    result = generate.main(["--date", "2026-03-27"])
+    saved = json.loads((drafts_dir / "2026-03-27.json").read_text(encoding="utf-8"))
+    draft_records = [record for record in saved if record["status"] == "draft"]
+
+    assert result == generate.ExitCode.SUCCESS
+    assert len(draft_records) == 7
+
+
+def test_main_excludes_terminal_records_from_new_selection_slots(monkeypatch, tmp_path) -> None:
+    """Published and skipped records should not reduce the number of fresh drafts."""
+    articles_dir = tmp_path / "articles"
+    drafts_dir = tmp_path / "drafts"
+    articles_dir.mkdir(parents=True, exist_ok=True)
+    drafts_dir.mkdir(parents=True, exist_ok=True)
+
+    articles = []
+    for index in range(1, 8):
+        articles.append(
+            {
+                "id": f"article-{index}",
+                "source_type": "perplexity",
+                "source_name": "Perplexity",
+                "title": f"Interesting tech story {index}",
+                "url": f"https://example.com/{index}",
+                "text": "AI planning workflow integrates with BIM and scheduling.",
+                "image_url": None,
+                "date": "2026-03-27",
+                "category_hint": "automation",
+                "collected_at": "2026-03-27T00:00:00+00:00",
+            }
+        )
+
+    (articles_dir / "2026-03-27.json").write_text(
+        json.dumps(articles),
+        encoding="utf-8",
+    )
+    (drafts_dir / "2026-03-27.json").write_text(
+        json.dumps(
+            [
+                {"id": "draft-1", "article_id": "article-1", "status": "published"},
+                {"id": "draft-2", "article_id": "article-2", "status": "skipped"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(generate, "ARTICLES_DIR", articles_dir)
+    monkeypatch.setattr(generate, "DRAFTS_DIR", drafts_dir)
+    monkeypatch.setattr(generate, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        generate,
+        "_load_logging_setup",
+        lambda: (lambda _project_root: tmp_path / "logs" / "pipeline-2026-03-27.log"),
+    )
+    monkeypatch.setattr(
+        generate,
+        "_load_claude_client",
+        lambda: (
+            lambda _api_key, selected_articles, max_items=None: list(selected_articles[:max_items]),
+            lambda _api_key, article: (
+                {
+                    "text": f"Useful draft with link {article['url']}",
+                    "category": "Automation",
+                },
+                [],
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        generate,
+        "_load_editorial_policy",
+        lambda: (
+            lambda _article: {
+                "score": 8,
+                "track_ids": ["bim_and_digital_twin"],
+                "track_labels": ["BIM, design tools, digital twins, and data layers"],
+                "business_function_ids": ["construction"],
+                "business_functions": ["construction"],
+                "angle": "Focus on the workflow shift.",
+            }
+        ),
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "token")
+
+    result = generate.main(["--date", "2026-03-27", "--max", "5"])
+    saved = json.loads((drafts_dir / "2026-03-27.json").read_text(encoding="utf-8"))
+    draft_records = [record for record in saved if record["status"] == "draft"]
+
+    assert result == generate.ExitCode.SUCCESS
+    assert len(draft_records) == 5
+    assert {record["article_id"] for record in draft_records} == {
+        "article-3",
+        "article-4",
+        "article-5",
+        "article-6",
+        "article-7",
+    }
+
+
 def test_editorial_rejection_reason_rejects_limitation_meta_articles() -> None:
     """Meta answers from upstream collection should never reach generation as drafts."""
     article = {

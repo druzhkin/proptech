@@ -224,12 +224,14 @@ def filter_articles(
     api_key: str,
     articles: Sequence[dict[str, Any]],
     *,
-    max_items: int = 5,
+    max_items: int | None = None,
     model: str = DEFAULT_MODEL,
 ) -> list[dict[str, Any]]:
     """Select the most relevant articles for draft generation."""
     if not articles:
         return []
+    if max_items is None or max_items <= 0 or max_items >= len(articles):
+        return _fallback_articles(articles, max_items=len(articles))
 
     article_summaries = [
         {
