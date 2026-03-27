@@ -61,10 +61,16 @@ def _call_perplexity(api_key: str, prompt: str) -> dict[str, Any]:
                 "content": (
                     "You are a PropTech and ConTech researcher using live web search. "
                     "Return only current source-backed stories from the last 7 days, "
-                    "with numbered items and citations. Never answer with "
+                    "with numbered items and citations. The audience is a CIO or "
+                    "IT director inside a developer company looking for practical "
+                    "technology, not market gossip. Prefer installable tools, AI "
+                    "workflows, GitHub/open-source projects with fresh release or "
+                    "adoption signals, robotics, drones, digital twins, and serious "
+                    "workflow automation across construction, operations, sales, "
+                    "finance, and internal knowledge work. Never answer with "
                     "knowledge-cutoff disclaimers, capability disclaimers, or "
-                    "generic limitation text. If a story cannot be verified with "
-                    "a source, skip it."
+                    "generic limitation text. If a story cannot be verified with a "
+                    "source, skip it."
                 ),
             },
             {"role": "user", "content": prompt},

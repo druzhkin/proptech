@@ -370,3 +370,39 @@
 - Пользовательский пример был валиден: старый editorial gate пропускал не только скучные process-stories, но и business/guide шум, если внутри было достаточно слов вроде BIM, workflow или integration
 - Новый бар намеренно смещён от “формально tech” к “реально любопытно для техно-читателя”: робот, дрон, CV, AI workflow, digital twin, prefab, 3D printing имеют приоритет над permit/compliance digitization
 - Residual risk: даже с лучшим фильтром качество ленты ограничено качеством upstream-сбора; пока Perplexity иногда отдаёт meta-response, а Railway YouTube transcript path ловит IP block, свежих сильных story batches может просто не хватать
+
+## Итерация 10 — 2026-03-27
+
+### Цель итерации
+
+Перевести контент-пайплайн из режима “общие PropTech-новости” в режим CIO tech radar: сильнее приоритизировать AI, installable/open-source инструменты, GitHub-проекты и решения для стройки, эксплуатации, продаж и финансов.
+
+### Задачи
+
+- [x] TASK-1: Завести явную editorial matrix под CIO-аудиторию и использовать её при ранжировании статей перед генерацией — агент: Coder
+- [x] TASK-2: Обновить selection/generation/collection prompts под AI, GitHub/open-source и installable tool stories вместо отраслевого шума — агент: Coder
+- [x] TASK-3: Добавить regression tests на CIO-fit scoring, GitHub/open-source допуск и off-target rejection — агент: Tester
+- [x] TASK-4: Прогнать quality gates, проверить локальный generate flow и зафиксировать результат с ретроспективой — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ tests/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -q` проходит
+- [x] smoke-тест: `python -c "from src.generate import main; print('generate OK')"`
+- [x] live-check: `python src/generate.py --date 2026-03-27 --max 5` отработал с editorial summary `drafts=5 rejected=8`
+
+### Лог работы
+
+- [CODE] `config/editorial_matrix.json`, `src/editorial_policy.py`, `src/generate.py`: введён явный CIO-oriented editorial layer с business functions, content tracks, scoring и новым reject path `editorial_policy_off_target_for_cio`; draft records теперь сохраняют `editorial_score`, `editorial_tracks` и `business_functions`
+- [CODE] `src/claude_client.py`: selection fallback теперь учитывает editorial priority, а prompts переориентированы на installable/open-source инструменты, GitHub-проекты, AI workflows и use-case для ИТ-директора девелопера
+- [CODE] `config/prompt.md`, `src/perplexity_client.py`: upstream research prompt смещён в сторону CIO tech radar, GitHub/open-source и applied AI/automation для стройки, эксплуатации, продаж и финансов
+- [TEST] `tests/test_editorial_policy.py`, `tests/test_claude_client.py`, `tests/test_generate.py`: добавлены тесты на strong CIO-fit для self-hosted AI stack, fallback priority по editorial_score и reject off-target corporate updates
+- [CRITIC] Прогнаны `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -q` (`45 passed`), `python -c "from src.generate import main; print('generate OK')"`
+- [CRITIC] Live-check: локальный `generate.py` сначала честно упал без `OPENROUTER_API_KEY`, после явной подстановки ключа отработал на batch `2026-03-27`, загрузил `16` статей, отфильтровал `8` как low-signal/off-target и сохранил `5` draft + `8` rejected
+
+### Ретроспектива итерации 10
+
+- Главная проблема была не только в “скучных статьях”, а в том, что сам пайплайн не знал, для кого он ранжирует контент; без явной CIO-модели он естественно скатывался в общий proptech noise
+- Новый слой сделал отбор более честным: installable AI/tooling, GitHub/open-source и реальные workflow changes теперь имеют отдельный приоритет вместо попытки вытащить это только prompt'ом
+- Residual risk: даже после этого часть live batch'ей всё ещё может уходить в generic “рынок растёт” или vendor PR, потому что upstream сбор ограничен Perplexity/YouTube; если захочется стабильно получать GitHub project reviews, следующим шагом лучше делать отдельный curated tool-radar source, а не пытаться выжать всё из новостного поиска

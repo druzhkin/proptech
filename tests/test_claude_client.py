@@ -34,6 +34,24 @@ def test_filter_articles_falls_back_to_input_order_when_selection_is_invalid(
     assert [article["id"] for article in selected] == ["a1", "a2"]
 
 
+def test_filter_articles_fallback_prefers_higher_editorial_scores(monkeypatch) -> None:
+    """Fallback ordering should use editorial priority when scores are available."""
+    articles = [
+        {"id": "a1", "title": "First", "text": "one", "editorial_score": 2},
+        {"id": "a2", "title": "Second", "text": "two", "editorial_score": 9},
+        {"id": "a3", "title": "Third", "text": "three", "editorial_score": 6},
+    ]
+    monkeypatch.setattr(
+        claude_client,
+        "_call_claude_json",
+        lambda *args, **kwargs: {"selected_ids": ["missing-id"]},
+    )
+
+    selected = claude_client.filter_articles("key", articles, max_items=2)
+
+    assert [article["id"] for article in selected] == ["a2", "a3"]
+
+
 def test_extract_openrouter_text_reads_openai_compatible_message_shape() -> None:
     """OpenRouter responses should be read from choices[0].message.content."""
     text = claude_client._extract_openrouter_text(  # noqa: SLF001

@@ -292,6 +292,95 @@ def test_main_rejects_business_only_articles_before_generation(monkeypatch, tmp_
     )
 
 
+def test_main_rejects_articles_that_do_not_fit_cio_radar(monkeypatch, tmp_path) -> None:
+    """Stories without a clear CIO-facing tool angle should be rejected before generation."""
+    articles_dir = tmp_path / "articles"
+    drafts_dir = tmp_path / "drafts"
+    articles_dir.mkdir(parents=True, exist_ok=True)
+    drafts_dir.mkdir(parents=True, exist_ok=True)
+
+    (articles_dir / "2026-03-27.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "article-github",
+                    "source_type": "perplexity",
+                    "source_name": "GitHub",
+                    "title": "Self-hosted document AI stack ships Docker setup",
+                    "url": "https://github.com/example/doc-stack",
+                    "text": "The repo combines OCR, semantic search, and local models for internal knowledge workflows.",
+                    "image_url": None,
+                    "date": "2026-03-27",
+                    "category_hint": "automation",
+                    "collected_at": "2026-03-27T00:00:00+00:00",
+                },
+                {
+                    "id": "article-corp",
+                    "source_type": "perplexity",
+                    "source_name": "Corporate newsroom",
+                    "title": "Vendor expands strategic partnership with developer",
+                    "url": "https://example.com/partnership",
+                    "text": "The companies plan to collaborate in several markets. Public technical detail was not shared.",
+                    "image_url": None,
+                    "date": "2026-03-27",
+                    "category_hint": "partnership",
+                    "collected_at": "2026-03-27T00:00:00+00:00",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(generate, "ARTICLES_DIR", articles_dir)
+    monkeypatch.setattr(generate, "DRAFTS_DIR", drafts_dir)
+    monkeypatch.setattr(generate, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        generate,
+        "_load_logging_setup",
+        lambda: (lambda _project_root: tmp_path / "logs" / "pipeline-2026-03-27.log"),
+    )
+    monkeypatch.setattr(
+        generate,
+        "_load_claude_client",
+        lambda: (
+            lambda _api_key, articles, max_items=5: list(articles[:max_items]),
+            lambda _api_key, article: (
+                {
+                    "text": f"Useful draft with link {article['url']}",
+                    "category": "Automation",
+                },
+                [],
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        generate,
+        "_load_editorial_policy",
+        lambda: (
+            lambda article: {
+                "score": 9 if article["id"] == "article-github" else 1,
+                "track_ids": ["open_source_tooling"] if article["id"] == "article-github" else [],
+                "track_labels": ["Installable open-source or self-hosted tools"] if article["id"] == "article-github" else [],
+                "business_function_ids": ["it_platform"] if article["id"] == "article-github" else [],
+                "business_functions": ["it platform"] if article["id"] == "article-github" else [],
+                "angle": "Treat it like a tool radar item.",
+            }
+        ),
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "token")
+
+    result = generate.main(["--date", "2026-03-27", "--max", "5"])
+    saved = json.loads((drafts_dir / "2026-03-27.json").read_text(encoding="utf-8"))
+    by_article_id = {record["article_id"]: record for record in saved}
+
+    assert result == generate.ExitCode.PARTIAL_FAILURE
+    assert by_article_id["article-github"]["status"] == "draft"
+    assert (
+        by_article_id["article-corp"]["rejection_reason"]
+        == "editorial_policy_off_target_for_cio"
+    )
+
+
 def test_editorial_rejection_reason_rejects_limitation_meta_articles() -> None:
     """Meta answers from upstream collection should never reach generation as drafts."""
     article = {

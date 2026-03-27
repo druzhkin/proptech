@@ -1,0 +1,289 @@
+{
+  "business_functions": {
+    "construction": {
+      "label": "construction",
+      "keywords": [
+        "construction",
+        "jobsite",
+        "active site",
+        "field crew",
+        "builder",
+        "site capture",
+        "surveying",
+        "bim",
+        "prefab",
+        "modular",
+        "robot",
+        "drone",
+        "laser scan",
+        "lidar",
+        "progress tracking",
+        "стройк",
+        "площадк",
+        "прораб",
+        "геодези"
+      ]
+    },
+    "operations": {
+      "label": "operations",
+      "keywords": [
+        "facility",
+        "building ops",
+        "maintenance",
+        "asset tracking",
+        "smart building",
+        "digital twin",
+        "sensor",
+        "iot",
+        "hvac",
+        "energy management",
+        "predictive maintenance",
+        "эксплуатац",
+        "обслуживан",
+        "инженерн"
+      ]
+    },
+    "sales": {
+      "label": "sales",
+      "keywords": [
+        "sales team",
+        "lead routing",
+        "crm",
+        "call summary",
+        "quote generation",
+        "buyer journey",
+        "virtual tour",
+        "virtual staging",
+        "sales ops",
+        "customer support",
+        "продаж",
+        "лид",
+        "звонк",
+        "crm"
+      ]
+    },
+    "finance": {
+      "label": "finance",
+      "keywords": [
+        "invoice",
+        "accounts payable",
+        "ap automation",
+        "spend control",
+        "forecasting",
+        "budgeting",
+        "cash flow",
+        "procurement",
+        "expense",
+        "finance team",
+        "смет",
+        "бюджет",
+        "финанс",
+        "закуп"
+      ]
+    },
+    "knowledge_ops": {
+      "label": "knowledge ops",
+      "keywords": [
+        "document ai",
+        "document parsing",
+        "ocr",
+        "knowledge base",
+        "semantic search",
+        "contract review",
+        "policy search",
+        "rag",
+        "vector search",
+        "meeting notes",
+        "docling",
+        "ragflow",
+        "qdrant",
+        "ollama",
+        "документ",
+        "поиск по знаниям",
+        "распознаван"
+      ]
+    },
+    "it_platform": {
+      "label": "it platform",
+      "keywords": [
+        "github",
+        "open source",
+        "open-source",
+        "self-hosted",
+        "self hosted",
+        "api",
+        "sdk",
+        "docker",
+        "platform team",
+        "integration layer",
+        "workflow automation",
+        "n8n",
+        "metabase",
+        "ifcopenshell",
+        "speckle",
+        "cvat",
+        "opendronemap"
+      ]
+    }
+  },
+  "tracks": [
+    {
+      "id": "ai_knowledge_ops",
+      "label": "AI copilots for documents and internal knowledge",
+      "business_functions": ["knowledge_ops", "finance", "sales", "construction", "it_platform"],
+      "keywords": [
+        "ai assistant",
+        "ai agent",
+        "copilot",
+        "document ai",
+        "contract review",
+        "invoice processing",
+        "meeting summary",
+        "rag",
+        "vector search",
+        "knowledge base",
+        "semantic search",
+        "local model",
+        "docling",
+        "ragflow",
+        "qdrant",
+        "ollama"
+      ]
+    },
+    {
+      "id": "open_source_tooling",
+      "label": "Installable open-source or self-hosted tools",
+      "business_functions": ["it_platform", "knowledge_ops"],
+      "keywords": [
+        "github",
+        "open source",
+        "open-source",
+        "self-hosted",
+        "self hosted",
+        "repository",
+        "repo",
+        "docker compose",
+        "community edition",
+        "apache 2.0",
+        "mit license",
+        "oss",
+        "self-host"
+      ]
+    },
+    {
+      "id": "site_intelligence",
+      "label": "Site robotics, drones, computer vision, and capture",
+      "business_functions": ["construction", "operations", "it_platform"],
+      "keywords": [
+        "robot",
+        "robotics",
+        "drone",
+        "rtk",
+        "computer vision",
+        "machine vision",
+        "site capture",
+        "laser scan",
+        "lidar",
+        "photogrammetry",
+        "inspection robot",
+        "progress tracking",
+        "cvat",
+        "opendronemap",
+        "fiftyone"
+      ]
+    },
+    {
+      "id": "bim_and_digital_twin",
+      "label": "BIM, design tools, digital twins, and data layers",
+      "business_functions": ["construction", "operations", "it_platform"],
+      "keywords": [
+        "planning",
+        "scheduling",
+        "field scheduling",
+        "design automation",
+        "generative design",
+        "simulation",
+        "feasibility",
+        "clash detection",
+        "coordination",
+        "bim",
+        "ifc",
+        "ifcopenshell",
+        "openbim",
+        "digital twin",
+        "speckle",
+        "cesium",
+        "3d tiles",
+        "bim viewer",
+        "model coordination",
+        "federated model",
+        "geomatics",
+        "that open"
+      ]
+    },
+    {
+      "id": "sales_and_finance_automation",
+      "label": "AI and workflow automation for sales and finance",
+      "business_functions": ["sales", "finance", "it_platform", "knowledge_ops"],
+      "keywords": [
+        "lead routing",
+        "crm copilot",
+        "call summary",
+        "proposal generation",
+        "quote automation",
+        "invoice automation",
+        "accounts payable",
+        "forecasting",
+        "budgeting",
+        "procurement workflow",
+        "n8n",
+        "metabase",
+        "erpnext"
+      ]
+    },
+    {
+      "id": "smart_building_ops",
+      "label": "Smart building operations and predictive maintenance",
+      "business_functions": ["operations", "finance", "it_platform"],
+      "keywords": [
+        "smart building",
+        "iot",
+        "sensor",
+        "predictive maintenance",
+        "building ops",
+        "energy optimization",
+        "hvac analytics",
+        "digital twin",
+        "fault detection"
+      ]
+    }
+  ],
+  "boost_keywords": {
+    "deployment": [
+      "deployed",
+      "deployment",
+      "rolled out",
+      "rollout",
+      "used by",
+      "used on",
+      "installed",
+      "pilot",
+      "active site",
+      "in production",
+      "customer",
+      "field deployment"
+    ],
+    "wow_factor": [
+      "autonomous",
+      "robot",
+      "drone",
+      "computer vision",
+      "3d print",
+      "laser scan",
+      "lidar",
+      "digital twin",
+      "local model",
+      "self-hosted"
+    ]
+  }
+}

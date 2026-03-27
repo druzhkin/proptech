@@ -22,11 +22,12 @@ DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
 OPENROUTER_TIMEOUT_SECONDS = 90
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 ALLOWED_CATEGORIES = (
-    "PropTech",
+    "AI",
+    "Open Source",
     "ConTech",
-    "\u0418\u043d\u0432\u0435\u0441\u0442\u0438\u0446\u0438\u0438",
-    "\u0420\u0435\u0433\u0443\u043b\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435",
-    "\u0422\u0440\u0435\u043d\u0434\u044b",
+    "Data & BIM",
+    "Automation",
+    "Smart Buildings",
 )
 FIRST_PERSON_PATTERN = re.compile(
     r"\b(\u044f|\u043c\u044b|\u043c\u043d\u0435|\u043d\u0430\u043c|\u043d\u0430\u0441|"
@@ -144,6 +145,22 @@ def _style_brief_for_article(article: dict[str, Any]) -> str:
     return f"Style profile `{profile_name}`: {profile_brief}"
 
 
+def _fallback_articles(
+    articles: Sequence[dict[str, Any]],
+    *,
+    max_items: int,
+) -> list[dict[str, Any]]:
+    """Prefer higher-scoring editorial fits when model selection is unavailable."""
+    if any("editorial_score" in article for article in articles):
+        sorted_articles = sorted(
+            articles,
+            key=lambda article: int(article.get("editorial_score", 0) or 0),
+            reverse=True,
+        )
+        return list(sorted_articles[:max_items])
+    return list(articles[:max_items])
+
+
 def _call_claude_json(
     api_key: str,
     *,
@@ -222,21 +239,27 @@ def filter_articles(
             "category_hint": article.get("category_hint", ""),
             "url": article.get("url", ""),
             "text_excerpt": str(article.get("text", ""))[:1200],
+            "editorial_score": article.get("editorial_score", 0),
+            "editorial_tracks": article.get("editorial_tracks", []),
+            "business_functions": article.get("business_functions", []),
+            "editorial_angle": article.get("editorial_angle", ""),
         }
         for article in articles
     ]
 
     system_prompt = (
         "You are the editor of a Russian-language Telegram channel about "
-        "PropTech and ConTech. Select only technology-driven stories for "
-        "Russian-speaking real estate professionals. Prefer stories that would "
-        "actually surprise a tech-curious reader: deployed tools, automation, "
-        "AI workflows, robotics, drones, digital twins, industrialized "
-        "construction, computer vision, sensor systems, and operational "
-        "product changes. Exclude funding rounds, M&A, partnerships without "
-        "shipped tech, executive moves, generic market commentary, dry "
-        "permitting/compliance digitization, document-management upgrades, "
-        "standards frameworks, and vendor explainer content."
+        "PropTech and ConTech for CIOs and IT leaders inside developer "
+        "companies. The audience spans construction, operations, sales, "
+        "finance, and internal platforms. Select only stories that a strong "
+        "IT director could realistically forward to a team as a pilot idea, "
+        "architecture reference, or useful tech radar item. Prefer installable "
+        "tools, AI workflows, open-source stacks, robotics, drones, digital "
+        "twins, industrialized construction, computer vision, sensor systems, "
+        "and operational product changes. Exclude funding rounds, M&A, "
+        "partnerships without shipped tech, executive moves, generic market "
+        "commentary, dry permitting/compliance digitization, document-"
+        "management upgrades, standards frameworks, and vendor explainer content."
     )
     user_prompt = (
         "Return only a JSON object of the form "
@@ -244,11 +267,16 @@ def filter_articles(
         f"Select no more than {max_items} articles.\n\n"
         "Prioritize stories with concrete implementation details, measurable "
         "results, visible field usage, and product substance. Prefer items "
-        "that feel genuinely interesting rather than merely useful. Do not "
-        "select items whose main news angle is investment, valuation, "
-        "fundraising, acquisition, corporate finance, compliance workflow, "
-        "site-selection admin tooling, permit automation, or a generic "
-        'vendor "ultimate guide" / blog explainer.\n\n'
+        "that feel genuinely interesting rather than merely useful. Strong "
+        "fits include: AI for documents/knowledge, open-source or self-hosted "
+        "tools, GitHub-worthy projects, BIM/data layers, jobsite robotics, "
+        "drone or CV systems, and serious workflow automation for sales, "
+        "finance, construction, or building ops. When possible, balance the "
+        "selection across different business functions instead of picking five "
+        "variations of the same story. Do not select items whose main news "
+        "angle is investment, valuation, fundraising, acquisition, corporate "
+        "finance, compliance workflow, site-selection admin tooling, permit "
+        'automation, or a generic vendor "ultimate guide" / blog explainer.\n\n'
         f"Articles:\n{json.dumps(article_summaries, ensure_ascii=False, indent=2)}"
     )
 
@@ -265,10 +293,10 @@ def filter_articles(
             raise ValueError("selected_ids must be a list")
     except Exception:
         logger.exception(
-            "OpenRouter filtering failed; falling back to first %d articles",
+            "OpenRouter filtering failed; falling back to editorial-priority order for %d articles",
             max_items,
         )
-        return list(articles[:max_items])
+        return _fallback_articles(articles, max_items=max_items)
 
     selected_id_set = {str(item).strip() for item in selected_ids if str(item).strip()}
     selected_articles = [
@@ -278,10 +306,10 @@ def filter_articles(
     ]
     if not selected_articles:
         logger.warning(
-            "OpenRouter selected no valid article IDs; using first %d articles",
+            "OpenRouter selected no valid article IDs; using editorial-priority order for %d articles",
             max_items,
         )
-        return list(articles[:max_items])
+        return _fallback_articles(articles, max_items=max_items)
 
     return selected_articles[:max_items]
 
@@ -294,16 +322,35 @@ def generate_post(
     feedback: Sequence[str] | None = None,
 ) -> dict[str, str]:
     """Generate a Telegram post draft and category for a single article."""
+    audience_block = ""
+    business_functions = article.get("business_functions", [])
+    editorial_tracks = article.get("editorial_tracks", [])
+    editorial_angle = str(article.get("editorial_angle", "")).strip()
+    if isinstance(business_functions, list) and business_functions:
+        audience_block += (
+            "- target business functions: "
+            f"{', '.join(str(item) for item in business_functions)}\n"
+        )
+    if isinstance(editorial_tracks, list) and editorial_tracks:
+        audience_block += (
+            "- editorial tracks: "
+            f"{', '.join(str(item) for item in editorial_tracks)}\n"
+        )
+    if editorial_angle:
+        audience_block += f"- framing hint: {editorial_angle}\n"
+
     system_prompt = (
         "You are the editor of a Russian-language Telegram channel about "
         "PropTech and ConTech. Write natural Russian that sounds like a human "
         "editor, not like a corporate AI assistant. Avoid first-person voice "
         "and never write from 'I', 'we', or 'our' perspective. Focus on "
         "technology, implementation details, constraints, and operational "
-        "impact. The story should feel interesting to a tech enthusiast, not "
-        "like a dry compliance memo or vendor brochure. Do not turn the post "
-        "into a funding, PR, or business-roundup note. Avoid markdown. Return "
-        "only a JSON object of the form "
+        "impact. The audience is a CIO or IT director inside a developer "
+        "company who may care about construction, operations, sales, finance, "
+        "and internal platforms at the same time. The story should feel "
+        "interesting to a tech enthusiast, not like a dry compliance memo or "
+        "vendor brochure. Do not turn the post into a funding, PR, or "
+        "business-roundup note. Avoid markdown. Return only a JSON object of the form "
         '{"text":"...","category":"..."} '
         f"where category is one of {', '.join(ALLOWED_CATEGORIES)}."
     )
@@ -319,13 +366,16 @@ def generate_post(
         "- 130-260 words, maximum 400\n"
         "- structure: concrete technical shift -> why it matters in practice -> limitation, trade-off, or next implication\n"
         "- write with a human rhythm; vary sentence length and avoid template phrasing\n"
+        "- explain where this could fit inside a developer company; mention a likely owner team if it is obvious from the source\n"
         "- if the source feels dry, focus on the actual mechanism and why it is unexpectedly useful; do not pad it with generic excitement\n"
+        "- if the item is open-source or self-hosted, make that practical angle visible without sounding like documentation\n"
         "- no first-person voice and no collective voice ('I', 'we', 'our')\n"
         "- no focus on investments, funding rounds, valuations, or deal gossip\n"
         "- optional emoji is allowed, but only if it feels natural and topic-relevant\n"
         "- no markdown (#, **, __)\n"
         f"- must end with the source URL: {article.get('url', '')}\n\n"
         f"{style_brief}\n\n"
+        f"Editorial brief:\n{audience_block or '- no extra editorial metadata provided'}\n\n"
         f"Article:\n{json.dumps(article, ensure_ascii=False, indent=2)}"
         f"{feedback_block}"
     )

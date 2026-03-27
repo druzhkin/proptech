@@ -27,6 +27,7 @@ DRAFTS_DIR = PROJECT_ROOT / "data" / "drafts"
 
 FilterArticlesCallable = Callable[..., list[dict[str, Any]]]
 GenerateValidatedCallable = Callable[..., tuple[dict[str, str], list[str]]]
+DescribeEditorialCallable = Callable[[dict[str, Any]], dict[str, Any]]
 TECH_SIGNAL_KEYWORDS = (
     "ai",
     "automation",
@@ -203,6 +204,18 @@ def _load_claude_client() -> tuple[FilterArticlesCallable, GenerateValidatedCall
     return filter_articles, generate_validated_post
 
 
+def _load_editorial_policy() -> DescribeEditorialCallable:
+    """Import editorial helpers in a way that works for package and script execution."""
+    if __package__ in (None, ""):
+        if str(PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(PROJECT_ROOT))
+        from src.editorial_policy import describe_editorial_fit
+    else:
+        from .editorial_policy import describe_editorial_fit
+
+    return describe_editorial_fit
+
+
 def _resolve_articles_file(requested_date: str | None = None) -> Path:
     """Resolve the article JSON file to use for draft generation."""
     if requested_date:
@@ -307,6 +320,18 @@ def _is_marketing_explainer(article: dict[str, Any]) -> bool:
     return not _has_deployment_evidence(article)
 
 
+def _is_off_target_for_cio(article: dict[str, Any]) -> bool:
+    """Reject stories that do not fit the CIO-style editorial radar."""
+    if "editorial_score" not in article and "editorial_track_ids" not in article:
+        return False
+    editorial_score = int(article.get("editorial_score", 0) or 0)
+    track_ids = article.get("editorial_track_ids", [])
+    business_function_ids = article.get("business_function_ids", [])
+    if not isinstance(track_ids, list) or not isinstance(business_function_ids, list):
+        return editorial_score <= 0
+    return editorial_score < 4 or not track_ids or not business_function_ids
+
+
 def _editorial_rejection_reason(article: dict[str, Any]) -> str | None:
     """Return the editorial rejection reason for an article, if any."""
     text = _article_blob(article)
@@ -316,7 +341,25 @@ def _editorial_rejection_reason(article: dict[str, Any]) -> str | None:
         return "editorial_policy_non_technical_or_investment"
     if _is_dry_process_story(article) or _is_marketing_explainer(article):
         return "editorial_policy_boring_or_promotional"
+    if _is_off_target_for_cio(article):
+        return "editorial_policy_off_target_for_cio"
     return None
+
+
+def _enrich_article_with_editorial_fit(
+    article: dict[str, Any],
+    describe_editorial_fit: DescribeEditorialCallable,
+) -> dict[str, Any]:
+    """Attach editorial fit metadata to an article without mutating the input."""
+    fit = describe_editorial_fit(article)
+    enriched_article = dict(article)
+    enriched_article["editorial_score"] = int(fit.get("score", 0) or 0)
+    enriched_article["editorial_track_ids"] = list(fit.get("track_ids", []))
+    enriched_article["editorial_tracks"] = list(fit.get("track_labels", []))
+    enriched_article["business_function_ids"] = list(fit.get("business_function_ids", []))
+    enriched_article["business_functions"] = list(fit.get("business_functions", []))
+    enriched_article["editorial_angle"] = str(fit.get("angle", "")).strip()
+    return enriched_article
 
 
 def _build_draft_record(
@@ -340,6 +383,9 @@ def _build_draft_record(
         "category": category,
         "text": text,
         "status": status,
+        "editorial_score": article.get("editorial_score"),
+        "editorial_tracks": article.get("editorial_tracks", []),
+        "business_functions": article.get("business_functions", []),
         "validation_errors": validation_errors or [],
         "rejection_reason": rejection_reason,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -424,18 +470,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
     editorial_rejected_records: list[dict[str, Any]] = []
     eligible_articles: list[dict[str, Any]] = []
+    describe_editorial_fit = _load_editorial_policy()
     for article in source_backed_articles:
-        rejection_reason = _editorial_rejection_reason(article)
+        enriched_article = _enrich_article_with_editorial_fit(article, describe_editorial_fit)
+        rejection_reason = _editorial_rejection_reason(enriched_article)
         if rejection_reason:
             editorial_rejected_records.append(
                 _build_draft_record(
-                    article,
+                    enriched_article,
                     status="rejected",
                     rejection_reason=rejection_reason,
                 )
             )
             continue
-        eligible_articles.append(article)
+        eligible_articles.append(enriched_article)
 
     filter_articles, generate_validated_post = _load_claude_client()
 
@@ -460,6 +508,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.info(
             "Rejected %d low-signal or business-first articles due to editorial policy",
             len(editorial_rejected_records),
+        )
+    if eligible_articles:
+        logger.info(
+            "CIO-fit eligible articles: %d; top scores=%s",
+            len(eligible_articles),
+            ", ".join(
+                str(article.get("editorial_score", 0))
+                for article in sorted(
+                    eligible_articles,
+                    key=lambda item: int(item.get("editorial_score", 0) or 0),
+                    reverse=True,
+                )[:5]
+            ),
         )
 
     if not eligible_articles:
