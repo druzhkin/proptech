@@ -28,6 +28,27 @@ PUBLISHED_DIR = PROJECT_ROOT / "data" / "published"
 PendingEdits = MutableMapping[str, dict[str, str]]
 AuthorizedUsers = set[str]
 AUTHORIZED_CHANNEL_STATUSES = {"administrator", "creator"}
+EMPTY_DRAFTS_MESSAGE = (
+    "\u0427\u0435\u0440\u043d\u043e\u0432\u0438\u043a\u043e\u0432 \u043f\u043e\u043a\u0430 "
+    "\u043d\u0435\u0442. \u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u043d\u0443\u0436\u043d\u043e "
+    "\u0441\u043e\u0431\u0440\u0430\u0442\u044c \u0441\u0442\u0430\u0442\u044c\u0438 \u0438 "
+    "\u0441\u0433\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u0442\u044c draft batch."
+)
+EMPTY_STATUS_MESSAGE = (
+    "\u0421\u0442\u0430\u0442\u0443\u0441 \u043f\u043e\u043a\u0430 \u043d\u0435\u0434\u043e\u0441\u0442"
+    "\u0443\u043f\u0435\u043d: \u0432 data/drafts \u0435\u0449\u0451 \u043d\u0435\u0442 \u043d\u0438 "
+    "\u043e\u0434\u043d\u043e\u0433\u043e batch-\u0444\u0430\u0439\u043b\u0430."
+)
+HELP_MESSAGE = (
+    "\u041a\u043e\u043c\u0430\u043d\u0434\u044b: /drafts, /next, /status, /cancel. "
+    "\u041a\u043d\u043e\u043f\u043a\u0438 Publish/Edit/Skip \u0440\u0430\u0431\u043e\u0442\u0430"
+    "\u044e\u0442 \u043f\u043e\u0434 \u043a\u0430\u0436\u0434\u044b\u043c draft preview."
+)
+UNKNOWN_COMMAND_MESSAGE = (
+    "\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0430\u044f \u043a\u043e\u043c\u0430\u043d"
+    "\u0434\u0430. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 /drafts, /next, "
+    "/status \u0438\u043b\u0438 /cancel."
+)
 
 
 class ExitCode(IntEnum):
@@ -629,7 +650,15 @@ def send_draft_preview(
     prefix_text: str | None = None,
 ) -> None:
     """Send the next pending draft or a specific draft preview to the admin."""
-    actual_date, records = load_drafts(drafts_date)
+    try:
+        actual_date, records = load_drafts(drafts_date)
+    except FileNotFoundError:
+        empty_message = EMPTY_DRAFTS_MESSAGE
+        if prefix_text:
+            empty_message = f"{prefix_text}\n\n{empty_message}"
+        client.send_message(chat_id, empty_message)
+        return
+
     short_ids = build_short_id_map(records)
 
     if draft_id:
@@ -661,7 +690,12 @@ def send_draft_preview(
 
 def send_status(client: TelegramClient, chat_id: str | int, *, drafts_date: str | None = None) -> None:
     """Send batch status counters to the admin."""
-    actual_date, records = load_drafts(drafts_date)
+    try:
+        actual_date, records = load_drafts(drafts_date)
+    except FileNotFoundError:
+        client.send_message(chat_id, EMPTY_STATUS_MESSAGE)
+        return
+
     client.send_message(chat_id, format_status_message(actual_date, records))
 
 
@@ -791,13 +825,17 @@ def handle_message(
         return
 
     if text == "/start":
+        client.send_message(chat_id, HELP_MESSAGE)
+        return
+
+    if text == "/start":
         client.send_message(
             chat_id,
             "Команды: /drafts, /status, /cancel. Кнопки Publish/Edit/Skip работают под каждым draft preview.",
         )
         return
 
-    if text == "/drafts":
+    if text in {"/drafts", "/next"}:
         send_draft_preview(client, chat_id)
         return
 

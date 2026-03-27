@@ -302,3 +302,35 @@
 - Telegram operational gap заметно сократился: bot больше не требует ручного поиска `TG_ADMIN_ID`, если пользователь действительно админ целевого канала
 - Самый неприятный runtime-баг этой итерации был не в OpenRouter, а в upstream collection: Perplexity один раз вернул limitation text вместо новостей; теперь такой ответ не маскируется под “успешный сбор”
 - Residual risk: Railway-подъём подтверждён только для review-бота; scheduled `collect -> generate` в Railway пока не настроен, а уже опубликованные в чате Telegram/OpenRouter secrets нужно считать скомпрометированными и перевыпустить
+
+## Итерация 8 — 2026-03-27
+
+### Цель итерации
+
+Закрыть реальный UX-баг review-бота из Telegram: пустой `data/drafts` не должен выбрасывать сырое исключение пользователю, а команда `/next` должна работать как ожидаемая навигация по черновикам.
+
+### Задачи
+
+- [x] TASK-1: Добавить friendly empty-state для `/drafts` и `/status`, если batch-файлы ещё не созданы — агент: Coder
+- [x] TASK-2: Добавить alias `/next` для показа следующего draft preview и обновить help-text — агент: Coder
+- [x] TASK-3: Добавить regression tests на empty-state и `/next` — агент: Tester
+- [x] TASK-4: Прогнать quality gates, обновить Railway deployment и зафиксировать результат в журнале — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ tests/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -q` проходит
+- [x] smoke-тест: `python -c "from src.bot import main; print('bot OK')"`
+
+### Лог работы
+
+- [CODE] `src/bot.py`: добавлены дружелюбные ответы вместо raw `FileNotFoundError` для `/drafts` и `/status`; `/next` теперь ведёт на тот же preview flow, что и `/drafts`
+- [TEST] `tests/test_bot.py`: добавлены регрессионные тесты на empty batch handling, обновлённый `/start` help и alias `/next`
+- [CRITIC] Прогнаны `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -q`, `python -c "from src.bot import main; print('bot OK')"`
+
+### Ретроспектива итерации 8
+
+- Скриншот из реального чата показал эксплуатационный дефект, который раньше не ловился локальными smoke-проверками: Railway worker мог быть жив, но без draft batch в volume
+- Бот больше не выглядит сломанным в нулевом состоянии и принимает естественную команду `/next`, которую пользователь ожидаемо вводит руками
+- Residual risk: даже после этого фикса empty-state останется нормальным рабочим состоянием, пока scheduled `collect -> generate` в Railway не автоматизирован

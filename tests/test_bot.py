@@ -172,3 +172,103 @@ def test_ensure_authorized_rejects_non_admin_without_pinned_admin() -> None:
     )
 
     assert is_allowed is False
+
+
+def test_send_draft_preview_handles_missing_batches_gracefully(monkeypatch) -> None:
+    """No-drafts state should be shown as a user message, not as a raw exception."""
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.messages: list[tuple[str | int, str]] = []
+
+        def send_message(self, chat_id: str | int, text: str, *, reply_markup=None) -> dict[str, int]:
+            self.messages.append((chat_id, text))
+            return {"message_id": len(self.messages)}
+
+    def fake_load_drafts(requested_date: str | None = None) -> tuple[str, list[dict[str, str]]]:
+        del requested_date
+        raise FileNotFoundError("No draft files found in data/drafts")
+
+    monkeypatch.setattr(bot, "load_drafts", fake_load_drafts)
+    client = FakeClient()
+
+    bot.send_draft_preview(client, "777")  # type: ignore[arg-type]
+
+    assert client.messages == [("777", bot.EMPTY_DRAFTS_MESSAGE)]
+
+
+def test_send_status_handles_missing_batches_gracefully(monkeypatch) -> None:
+    """Status command should explain that no draft batch exists yet."""
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.messages: list[tuple[str | int, str]] = []
+
+        def send_message(self, chat_id: str | int, text: str, *, reply_markup=None) -> dict[str, int]:
+            self.messages.append((chat_id, text))
+            return {"message_id": len(self.messages)}
+
+    def fake_load_drafts(requested_date: str | None = None) -> tuple[str, list[dict[str, str]]]:
+        del requested_date
+        raise FileNotFoundError("No draft files found in data/drafts")
+
+    monkeypatch.setattr(bot, "load_drafts", fake_load_drafts)
+    client = FakeClient()
+
+    bot.send_status(client, "777")  # type: ignore[arg-type]
+
+    assert client.messages == [("777", bot.EMPTY_STATUS_MESSAGE)]
+
+
+def test_handle_message_start_uses_updated_help_text() -> None:
+    """Help should mention /next because it is part of the review flow now."""
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.messages: list[tuple[str | int, str]] = []
+
+        def send_message(self, chat_id: str | int, text: str, *, reply_markup=None) -> dict[str, int]:
+            self.messages.append((chat_id, text))
+            return {"message_id": len(self.messages)}
+
+    client = FakeClient()
+
+    bot.handle_message(
+        client,  # type: ignore[arg-type]
+        {"chat": {"id": 777}, "text": "/start"},
+        channel_id="@proptech_channel",
+        pending_edits={},
+    )
+
+    assert client.messages == [("777", bot.HELP_MESSAGE)]
+
+
+def test_handle_message_accepts_next_alias(monkeypatch) -> None:
+    """Admins should be able to use /next as an alias for /drafts."""
+    preview_requests: list[tuple[str | int, str | None, str | None, str | None]] = []
+
+    class FakeClient:
+        def send_message(self, chat_id: str | int, text: str, *, reply_markup=None) -> dict[str, int]:
+            raise AssertionError(f"Unexpected send_message call for {chat_id}: {text}")
+
+    def fake_send_draft_preview(
+        client,
+        chat_id: str | int,
+        *,
+        drafts_date: str | None = None,
+        draft_id: str | None = None,
+        prefix_text: str | None = None,
+    ) -> None:
+        del client
+        preview_requests.append((chat_id, drafts_date, draft_id, prefix_text))
+
+    monkeypatch.setattr(bot, "send_draft_preview", fake_send_draft_preview)
+
+    bot.handle_message(
+        FakeClient(),  # type: ignore[arg-type]
+        {"chat": {"id": 777}, "text": "/next"},
+        channel_id="@proptech_channel",
+        pending_edits={},
+    )
+
+    assert preview_requests == [("777", None, None, None)]
