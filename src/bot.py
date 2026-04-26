@@ -733,7 +733,17 @@ def handle_callback_query(
 
     action, drafts_date, draft_id = _parse_callback_data(data)
     _, records = load_drafts(drafts_date)
-    draft = find_draft_by_short_id(records, draft_id)
+    try:
+        draft = find_draft_by_short_id(records, draft_id)
+    except LookupError as exc:
+        logger.warning("Draft lookup failed: %s", exc)
+        client.answer_callback_query(callback_query_id, "Черновик не найден или устарёл.")
+        try:
+            client.edit_message_reply_markup(chat_id, message_id)
+        except Exception:
+            logger.exception("Failed to clear stale callback keyboard")
+        return
+
     short_ids = build_short_id_map(records)
     full_id = str(draft.get("id", "")).strip()
     short_id = short_ids.get(full_id, full_id)
@@ -890,12 +900,23 @@ def handle_update(
 
     callback_query = update.get("callback_query")
     if isinstance(callback_query, dict):
-        handle_callback_query(
-            client,
-            callback_query,
-            channel_id=channel_id,
-            pending_edits=pending_edits,
-        )
+        try:
+            handle_callback_query(
+                client,
+                callback_query,
+                channel_id=channel_id,
+                pending_edits=pending_edits,
+            )
+        except Exception:
+            logger.exception("Unhandled error in callback query handler")
+            if callback_query.get("id"):
+                try:
+                    client.answer_callback_query(
+                        str(callback_query["id"]),
+                        "Ошибка обработки действия. Попробуйте /drafts.",
+                    )
+                except Exception:
+                    logger.exception("Failed to notify admin about callback error")
         return
 
     message = update.get("message")

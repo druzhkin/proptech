@@ -353,6 +353,40 @@ def test_handle_callback_query_publish_updates_draft_status(monkeypatch) -> None
     assert preview_requests
 
 
+def test_handle_callback_query_not_found_draft_gracefully(monkeypatch) -> None:
+    """If a callback references a missing draft, the bot should answer gracefully instead of crashing."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeClient:
+        def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+            calls.append({"method": "answer_callback_query", "id": callback_query_id, "text": text})
+
+        def edit_message_reply_markup(self, chat_id: str | int, message_id: int) -> None:
+            calls.append({"method": "edit_message_reply_markup", "chat_id": chat_id, "message_id": message_id})
+
+    def fake_load_drafts(requested_date: str | None = None) -> tuple[str, list[dict[str, Any]]]:
+        del requested_date
+        return ("2026-03-26", [])
+
+    monkeypatch.setattr(bot, "load_drafts", fake_load_drafts)
+
+    bot.handle_callback_query(
+        FakeClient(),  # type: ignore[arg-type]
+        {
+            "id": "cq-missing",
+            "data": "publish|2026-03-26|nonexistent-draft",
+            "message": {"chat": {"id": 777}, "message_id": 99},
+        },
+        channel_id="@proptech_channel",
+        pending_edits={},
+    )
+
+    assert any(
+        c["method"] == "answer_callback_query" and "не найден" in c["text"]
+        for c in calls
+    )
+
+
 def test_handle_callback_query_skip_updates_draft_status(monkeypatch) -> None:
     """Skip callback should mark draft skipped and show the next draft."""
     calls: list[dict[str, Any]] = []
