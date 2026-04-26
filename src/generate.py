@@ -7,7 +7,6 @@ import argparse
 import json
 import logging
 import os
-import re
 import sys
 import uuid
 from collections.abc import Callable, Sequence
@@ -223,6 +222,21 @@ def _load_editorial_policy() -> DescribeEditorialCallable:
     return describe_editorial_fit
 
 
+def _load_editorial_helpers() -> tuple[Any, Any, Any]:
+    """Import low-level editorial text helpers for package and script execution."""
+    if __package__ in (None, ""):
+        if str(PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(PROJECT_ROOT))
+        from src.editorial_policy import _article_blob, _contains_keyword, _keyword_hits
+    else:
+        from .editorial_policy import _article_blob, _contains_keyword, _keyword_hits
+
+    return _article_blob, _contains_keyword, _keyword_hits
+
+
+_article_blob, _contains_keyword, _keyword_hits = _load_editorial_helpers()
+
+
 def _resolve_articles_file(requested_date: str | None = None) -> Path:
     """Resolve the article JSON file to use for draft generation."""
     if requested_date:
@@ -259,37 +273,12 @@ def _is_evergreen_placeholder(article: dict[str, Any]) -> bool:
     return str(article.get("url", "")).startswith("evergreen://")
 
 
-def _article_blob(article: dict[str, Any]) -> str:
-    """Flatten the main searchable article fields into one lowercase string."""
-    return " ".join(
-        str(article.get(field, ""))
-        for field in ("title", "text", "category_hint", "source_name", "url")
-    ).lower()
-
-
 def _article_lede_blob(article: dict[str, Any]) -> str:
     """Focus on metadata fields that usually define the main news angle."""
     return " ".join(
         str(article.get(field, ""))
         for field in ("title", "category_hint", "source_name", "url")
     ).lower()
-
-
-def _contains_keyword(text: str, keyword: str) -> bool:
-    """Match short keywords strictly and longer ones as substrings."""
-    normalized_keyword = keyword.lower()
-    if len(normalized_keyword) <= 3 and normalized_keyword.isalpha():
-        return re.search(rf"\b{re.escape(normalized_keyword)}\b", text) is not None
-    return normalized_keyword in text
-
-
-def _keyword_hits(text: str, keywords: Sequence[str]) -> set[str]:
-    """Return the subset of keywords that matched in text."""
-    return {
-        keyword
-        for keyword in keywords
-        if _contains_keyword(text, keyword)
-    }
 
 
 def _has_high_interest_signal(article: dict[str, Any]) -> bool:

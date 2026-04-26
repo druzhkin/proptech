@@ -224,26 +224,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     # --- Perplexity ---
     if run_perplexity:
         api_key = os.getenv("PERPLEXITY_API_KEY")
+        perplexity_articles: list[dict[str, Any]] = []
+        perplexity_had_error = False
         try:
             perplexity_articles = search_proptech_news(api_key or "")
-            if not perplexity_articles:
-                evergreen_articles = build_evergreen_articles()
-                if evergreen_articles:
-                    perplexity_articles = evergreen_articles
-                    logger.warning(
-                        "Perplexity returned no articles. Added %d evergreen topics.",
-                        len(evergreen_articles),
-                    )
-                else:
-                    logger.warning(
-                        "Perplexity returned no articles and evergreen fallback is empty."
-                    )
-            all_articles.extend(perplexity_articles)
-            source_results["perplexity"] = True
-            logger.info("Perplexity: collected %d articles", len(perplexity_articles))
         except Exception:
-            source_results["perplexity"] = False
+            perplexity_had_error = True
             logger.exception("Perplexity failed")
+
+        perplexity_provided_articles = bool(perplexity_articles)
+
+        if not perplexity_articles and not perplexity_had_error:
+            evergreen_articles = build_evergreen_articles()
+            if evergreen_articles:
+                perplexity_articles = evergreen_articles
+                logger.warning(
+                    "Perplexity returned no articles. Added %d evergreen topics.",
+                    len(evergreen_articles),
+                )
+            else:
+                logger.warning(
+                    "Perplexity returned no articles and evergreen fallback is empty."
+                )
+
+        if perplexity_articles:
+            all_articles.extend(perplexity_articles)
+            logger.info("Perplexity: collected %d articles", len(perplexity_articles))
+        source_results["perplexity"] = perplexity_provided_articles and not perplexity_had_error
 
     # --- YouTube ---
     if run_youtube:
@@ -277,9 +284,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     for src, count in sorted(sources.items()):
         logger.info("  %s: %d", src, count)
 
-    failures = sum(not status for status in source_results.values())
-    if failures == len(source_results):
+    if not all_articles:
         return ExitCode.FAILURE
+    failures = sum(not status for status in source_results.values())
     if failures:
         return ExitCode.PARTIAL_FAILURE
     return ExitCode.SUCCESS

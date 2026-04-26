@@ -7,6 +7,7 @@ import argparse
 import json
 import logging
 import os
+import signal
 import sys
 import time
 from collections.abc import Callable, MutableMapping, Sequence
@@ -954,15 +955,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Bot started without TG_ADMIN_ID; channel administrator lookup auth is enabled"
         )
 
+    scheduler = None
     if not args.once:
         try:
             start_scheduler_from_env = _load_scheduler_starter()
-            start_scheduler_from_env()
+            scheduler = start_scheduler_from_env()
         except ValueError as exc:
             logger.error("Invalid pipeline scheduler configuration: %s", exc)
             return ExitCode.FAILURE
 
-    while True:
+    stopped = False
+
+    def _signal_handler(signum: int, _frame: Any) -> None:
+        nonlocal stopped
+        logger.info("Received signal %d, shutting down gracefully...", signum)
+        stopped = True
+        if scheduler is not None:
+            scheduler.stop()
+
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    while not stopped:
         try:
             updates = client.get_updates(offset=offset, timeout=20)
         except Exception:
@@ -998,6 +1012,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.once:
             return ExitCode.SUCCESS
+
+    return ExitCode.SUCCESS
 
 
 if __name__ == "__main__":

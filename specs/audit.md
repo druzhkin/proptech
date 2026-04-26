@@ -1,225 +1,151 @@
 # Аудит проекта PropTech Pipeline
 
-Дата: 2026-03-26
-Статус: первичный аудит
+Дата: 2026-04-26
+Статус: повторный аудит после 13 завершённых итераций
+
+---
 
 ## Объём проверки
 
 - `specs/specs-requirements.md`
-- `src/*.py`
-- `config/*.json`
-- `config/prompt.md`
-- `config/.env.example`
-- `README.md`
-- `CLAUDE.md`
-- `requirements.txt`
-- `data/articles/2026-02-17.json`
+- `src/*.py` (13 файлов, ~4500 строк)
+- `tests/*.py` (12 файлов, ~59 тестов)
+- `config/*.json`, `config/prompt.md`, `config/.env.example`
+- `README.md`, `AGENTS.md`, `CLAUDE.md`
+- `pipeline.py`, `requirements.txt`
+
+---
 
 ## Краткий вывод
 
-Проект реализует только часть `R1` и пока не готов к автономному ежедневному запуску. `R2` (генерация постов), `R3` (Telegram-бот), большая часть `R4` (pipeline/logging/exit codes) и весь `R5` (tests) отсутствуют.
+Проект реализован end-to-end: сбор (R1), генерация (R2), Telegram-бот (R3), пайплайн/шедулер (R4), тесты (R5), документация (R6). Все требования спеки закрыты на уровне MVP.
 
-Даже текущая часть `R1` нестабильна: проект не проходит `ruff` и `mypy`, YouTube-транскрипты фактически не работают в текущем окружении, retry/backoff нет, а TLS-проверка у внешних API отключена вручную. Это не косметика, а реальные блокеры для надёжной эксплуатации.
+Однако codebase накопил архитектурный технический долг: огромные файлы нарушают SRP, есть дублирование кода, не все edge cases покрыты тестами, graceful shutdown отсутствует. Quality gates зелёные, но масштабируемость страдает.
+
+---
 
 ## Что подтверждено проверкой
 
-- `ruff check src/` падает:
-  - `src/collect.py`: `E402`
-  - `src/youtube_client.py`: неиспользуемые импорты
-- `mypy src/ --ignore-missing-imports` падает:
-  - `src/youtube_client.py`: несовместимость с `YouTubeTranscriptApi`
-  - `src/collect.py`: отсутствует аннотация `sources`
-- `tests/` отсутствует
-- В окружении установлен `youtube-transcript-api 1.2.4`, а код вызывает несуществующий `YouTubeTranscriptApi.get_transcript()`
-- В `data/articles/2026-02-17.json` уже видно частичное расхождение со спекой:
-  - один материал Perplexity сохранён с пустым `url`
-  - YouTube-материалы фактически опираются на fallback к `description`
+- `ruff check src/ tests/ --fix` — ✅ без ошибок
+- `mypy src/ --ignore-missing-imports` — ✅ без ошибок
+- `pytest tests/ -v --tb=short` — ✅ 59 passed
+- `python -c "from src.collect import main; print('collect OK')"` — ✅
+- `python -c "from src.generate import main; print('generate OK')"` — ✅
+- `python -c "from src.bot import main; print('bot OK')"` — ✅
+- `python -c "import pipeline; print('pipeline OK')"` — ✅
+- Live OpenRouter path подтверждён в итерации 6
+- Live Telegram bot auth и publish path подтверждены в итерациях 7–8
+- Railway deployment с in-process scheduler подтверждён в итерации 13
+
+---
 
 ## Критические баги и блокеры
 
-### P0-1. YouTube-транскрипты фактически сломаны в текущем окружении
+**P0 — отсутствуют.** Проект стабилен, работает в production.
 
-Файл: `src/youtube_client.py:83`
-
-Код вызывает `YouTubeTranscriptApi.get_transcript(...)`, но в установленной версии пакета (`1.2.4`) этого метода нет. Ошибка гасится широким `except`, поэтому пайплайн не падает, а тихо деградирует до `description`.
-
-Последствие:
-- требование спеки "получает транскрипт" фактически не выполняется
-- качество входного текста для генерации резко падает
-- проблема плохо наблюдаема, потому что скрыта общим `except`
-
-### P0-2. Нет fail-fast проверки обязательного конфига
-
-Файл: `src/collect.py:101`, `src/collect.py:114`, `src/collect.py:130`
-
-При отсутствии `PERPLEXITY_API_KEY` или `YOUTUBE_API_KEY` скрипт просто пишет warning и идёт дальше. Если ключей нет вообще, процесс завершится "успешно", но без данных.
-
-Последствие:
-- автоматизация не может отличить штатный запуск от пустого прогона
-- нарушено требование спеки про понятный exit при missing env
-- проблему легко пропустить в cron/CI/manual run
-
-### P0-3. Нет retry/backoff ни для одного внешнего API
-
-Файлы:
-- `src/perplexity_client.py:52`
-- `src/youtube_client.py:47`
-- `src/find_channels.py:43`
-
-Все сетевые вызовы делаются ровно одной попыткой. Rate limit, временный сетевой сбой или краткий `5xx` сразу обнуляют источник.
-
-Последствие:
-- нестабильность ежедневного сбора
-- прямое несоответствие `R1` и приоритетам спеки
-
-### P0-4. TLS-проверка вручную отключена для внешних API
-
-Файлы:
-- `src/perplexity_client.py:57`
-- `src/youtube_client.py:111`
-- `src/find_channels.py:66`
-
-Используются `verify=False` и `disable_ssl_certificate_validation=True`.
-
-Последствие:
-- компрометируется базовая безопасность и целостность данных
-- это особенно плохо для API-ключей и внешнего контента
-- такое поведение не должно доходить до production даже в "простом" пайплайне
-
-### P0-5. У проекта нет базовой защитной сетки качества
-
-Файлы/каталоги:
-- `tests/` отсутствует
-- `src/collect.py`
-- `src/youtube_client.py`
-
-Сейчас одновременно отсутствуют тесты и не проходят даже `ruff`/`mypy`. Это не "технический долг на потом", а запрет на безопасное наращивание функциональности.
-
-Последствие:
-- любые следующие изменения будут делаться вслепую
-- регрессии в `R1` почти неизбежны
+---
 
 ## Архитектурные проблемы
 
-### P1-1. Реализован только фрагмент пайплайна
+### P1-1. Монолитные файлы нарушают SRP
 
-Отсутствуют:
-- `src/generate.py`
-- `src/claude_client.py`
-- `src/bot.py`
-- `pipeline.py`
+- `src/bot.py` — 1004 строки. Смешаны: HTTP-клиент Telegram, UI-хендлеры, persistence-логика (JSON IO), business-логика review flow, шедулер-запуск.
+- `src/generate.py` — 747 строки. Смешаны: editorial heuristic-фильтры, IO-логика (JSON merge/save), CLI-парсинг, draft-фабрика, интеграция с claude_client.
 
-То есть специка описывает end-to-end pipeline, а фактический код покрывает только часть сбора.
+Последствия: сложно тестировать изолированно, изменения в одной зоне затрагивают всё, новым контрибьюторам сложно ориентироваться.
 
-### P1-2. Нет единого bootstrap-слоя для конфигурации, путей, логирования и exit codes
+### P1-2. Дублирование кода между модулями
 
-Сейчас каждый скрипт сам собирает пути через `os.path`, а `collect.py` ещё и мутирует `sys.path` (`src/collect.py:24`). Это уже приводит к `ruff E402` и усложняет переносимость.
+- `_article_blob()`, `_contains_keyword()`, `_keyword_hits()` — идентичные функции в `src/editorial_policy.py` и `src/generate.py`.
+- `_should_retry_http_error()` — дублируется в `src/youtube_client.py` и `src/find_channels.py`.
 
-### P1-3. Документация и фактическая структура расходятся
+Последствия: изменение keyword-matching логики требует редактирования двух файлов, риск рассинхронизации.
 
-- AGENTS и команда запуска ссылаются на `specs/requirements.md`, но в репозитории лежит `specs/specs-requirements.md`
-- `README.md` и `CLAUDE.md` описывают в основном только сбор, а не целевую архитектуру из спеки
+### P1-3. Множественные lazy-import через sys.path
 
-### P1-4. Нет управляемого логирования для фонового запуска
+Паттерн `_load_*()` с `sys.path.insert` + импорт внутри функции используется в `collect.py`, `generate.py`, `bot.py`, `find_channels.py`. Это workaround для запуска скриптов напрямую, усложняет статический анализ.
 
-В коде только `logging.basicConfig(...)` на stdout. Лог-файла, ротации и общего формата с именем логгера нет.
+### P1-4. Нет graceful shutdown для scheduler
 
-## Отсутствующие фичи из спеки
+`PipelineScheduler` — daemon thread. При SIGINT в `bot.py` поток scheduler'а прерывается неконтролируемо. Нет `scheduler.stop()` в обработчике сигнала.
 
-### R1. Сбор контента реализован частично
+### P1-5. Perplexity fallback влияет на exit code некорректно
 
-Пробелы:
-- YouTube собирается за `7` дней, а не за `14` (`src/youtube_client.py:33`, `src/youtube_client.py:103`)
-- нет fallback на `config/evergreen_topics.json`, если сбор пустой
-- Perplexity не заполняет реальный `image_url`
-- Perplexity ставит `date=today`, а не дату первоисточника
-- `maxResults=10` без пагинации может пропускать релевантные видео на активных каналах
+В `src/collect.py` при evergreen fallback `perplexity_ok = False`, хотя статьи в `all_articles` попали. Это может привести к `PARTIAL_FAILURE` (exit 1) даже при успешном fallback.
 
-### R2. Генерация постов отсутствует полностью
+---
 
-Нет:
-- `src/generate.py`
-- `src/claude_client.py`
-- логики отбора top-5
-- логики генерации и валидации постов
-- записи `data/drafts/YYYY-MM-DD.json`
+## Отсутствующие фичи из спеки (резидуальные риски)
 
-### R3. Telegram-бот отсутствует полностью
+### R1. Мелкие пробелы
 
-Нет:
-- `src/bot.py`
-- review flow `/drafts`
-- публикации с `image_url`
-- `data/published/YYYY-MM-DD.json`
-- `/status`
+- `parse_perplexity_response()` отбрасывает ответы с <3 частей — если Perplexity вернула 1–2 новости, они теряются.
+- `image_url` от Perplexity всегда `None` — не извлекается из источников.
+- `maxResults=10` на YouTube без пагинации — активные каналы могут пропускать релевантные видео.
 
-### R4. DevOps и надёжность реализованы частично
+### R2. Генерация
 
-Нет:
-- `pipeline.py` или `make run`
-- согласованных exit codes `0/1/2`
-- лог-файла `logs/pipeline-YYYY-MM-DD.log`
-- ротации логов
-- общей проверки обязательных переменных
+- `max_tokens=1400` и `temperature=0.2` в `claude_client.py` — хардкод, без конфигурации через env.
+- `_parse_json_payload()` использует `re.search(r"\{.*\}", ...)` — при наличии нескольких JSON-объектов в тексте может схватить неверный.
 
-### R5. Тесты и CI отсутствуют
+### R3. Бот
 
-Нет:
-- каталога `tests/`
-- моков внешних API
-- coverage baseline
-- CI-контура
+- Нет тестов на inline callback-обработчики (Publish/Edit/Skip).
+- Нет тестов на редактирование текста админом (`pending_edits`, сохранение правки).
+- Нет тестов на успешную отправку фото (только fallback при ошибке).
+- `authorized_users` — mutable global set.
 
-### R6. Документация частично устарела
+### R4. Пайплайн
 
-Пробелы:
-- `README.md` не отражает реальную целевую архитектуру
-- `CLAUDE.md` не покрывает отсутствующие, но обязательные части пайплайна
-- `config/.env.example` не содержит поясняющих комментариев к переменным
+- `pipeline_runner.py` возвращает `int`, но сравнивается с `0` в `pipeline_scheduler.py` — несогласованность типов с `IntEnum` из collect/generate.
+
+### R5. Тесты
+
+- Покрытие editorial_matrix очень узкое: только 2 теста, не покрыты 5 из 6 tracks, boost_keywords, граничные score.
+- Нет тестов на backoff timing в `retry_utils`.
+- Нет тестов на `setup_logging` idempotency.
+
+---
 
 ## Качество кода
 
-### P1. Проблемы реализации
+### Плюсы
 
-- Везде используются сырые `dict`, а не явные модели данных
-- Много широких `except Exception`, которые скрывают root cause
-- Пути собраны через `os.path`, хотя в проектных правилах нужен `pathlib`
-- `src/youtube_client.py` содержит неиспользуемые импорты
-- `src/collect.py` ломает порядок импортов через `sys.path.insert(...)`
+- Type hints присутствуют на всех публичных функциях.
+- Логирование единообразное через `logging_utils.setup_logging`.
+- Error handling внешних API включает retry/backoff.
+- JSON-схемы articles/drafts/published стабильны и обратно совместимы.
+- Editorial policy вынесена в отдельный модуль и конфиг.
 
-### P1. Проблемы зависимостей
+### Минусы
 
-- `requirements.txt` задаёт `youtube-transcript-api>=0.6.1` без верхней границы
-- фактический runtime уже дрейфовал до `1.2.4`, где используемый API больше не совпадает с кодом
+- Большие tuple-константы (`TECH_SIGNAL_KEYWORDS`, `BUSINESS_NOISE_KEYWORDS` и т.д.) в `generate.py` — 100+ строк хардкода.
+- `validate_post()` считает слова через `len(post_text.split())` — неточно для русского языка.
+- `setup_logging()` вызывает `root_logger.handlers.clear()` — потенциальные проблемы при многократном вызове (например, в тестах).
+- `bot.py` использует `data=payload` вместо `json=payload` для некоторых Telegram API-вызовов.
 
-### P2. Наблюдаемость и диагностируемость
-
-- ошибок много, но почти нигде не пишется контекст запроса/источника
-- нет структурированного summary по ошибкам источников
-- повреждённый JSON-файл в `data/articles` приведёт к исключению при merge без мягкого восстановления
+---
 
 ## Приоритеты исправлений
 
-### P0
-
-1. Ввести fail-fast проверку env и корректные exit codes для запуска `collect.py`
-2. Исправить внешние клиенты: убрать insecure TLS bypass, добавить retry/backoff, починить работу с `youtube-transcript-api`
-3. Добавить минимальный test suite для `R1` и довести `ruff`/`mypy` до зелёного состояния
-
 ### P1
 
-1. Добить `R1` до требований спеки: 14 дней для YouTube, fallback на evergreen, корректнее парсить `date`/`image_url`
-2. Ввести единый bootstrap для путей, логирования и конфигурации
-3. Добавить `pipeline.py`, файловые логи и нормальную эксплуатационную схему
-4. Начать реализацию отсутствующих модулей `generate.py`, `claude_client.py`, `bot.py`
-5. Обновить `README.md`, `CLAUDE.md` и выровнять путь к спеке
+1. Убрать дублирование `_article_blob`, `_contains_keyword`, `_keyword_hits` — вынести в shared helper или использовать только `editorial_policy.py`.
+2. Рефакторинг `bot.py` и `generate.py` на более мелкие модули (в рамках одного пакета, без breaking changes).
+3. Добавить graceful shutdown для scheduler (SIGINT/SIGTERM handlers).
+4. Исправить `perplexity_ok` при evergreen fallback — корректный exit code.
+5. Расширить тестовое покрытие editorial policy и inline callback бота.
 
 ### P2
 
-1. Перейти на `pathlib` и более строгие модели данных
-2. Уточнить типизацию и убрать широкие `dict`
-3. Улучшить категоризацию и извлечение метаданных из Perplexity/YouTube
+1. Убрать дублирование `_should_retry_http_error` в shared HTTP-utility.
+2. Улучшить `_parse_json_payload` — robust JSON extraction вместо regex.
+3. Добавить jitter в `retry_utils.backoff`.
+4. Сделать `max_tokens`/`temperature` конфигурируемыми через env.
+5. Перейти от сырых `dict` к `TypedDict` или `dataclass` для Article/Draft.
+
+---
 
 ## Итоговая оценка
 
-Состояние репозитория сейчас: ранний прототип сбора данных, а не рабочий end-to-end pipeline. Начинать реализацию `R2/R3` поверх текущей базы преждевременно: сначала нужно закрыть P0 по надёжности, безопасности и тестируемости у `R1`.
+Проект — рабочий production-MVP с end-to-end пайплайном. Все P0-блокеры закрыты. Основной риск сейчас — архитектурная энтропия: рост файлов и дублирование кода замедлят дальнейшую разработку. Следующие итерации должны фокусироваться на рефакторинге и расширении тестового покрытия, а не на новых фичах.

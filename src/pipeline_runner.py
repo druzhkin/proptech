@@ -23,9 +23,9 @@ def run_pipeline(*, configure_logging: bool = True) -> int:
         logger.info("Pipeline logging to %s", log_path)
 
     collect_exit = int(collect_main([]))
-    if collect_exit != CollectExitCode.SUCCESS:
+    if collect_exit == CollectExitCode.FAILURE:
         logger.error(
-            "Collect step exited with code %d. Generate step will not start.",
+            "Collect step failed with code %d. Generate step will not start.",
             collect_exit,
         )
         return collect_exit

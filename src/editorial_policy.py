@@ -7,6 +7,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -66,7 +67,7 @@ def _contains_keyword(text: str, keyword: str) -> bool:
     return normalized_keyword in text
 
 
-def _keyword_hits(text: str, keywords: list[str]) -> set[str]:
+def _keyword_hits(text: str, keywords: Sequence[str]) -> set[str]:
     """Return the subset of keywords that matched in text."""
     return {
         keyword

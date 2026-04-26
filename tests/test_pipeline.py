@@ -4,7 +4,7 @@ from src import pipeline_runner
 
 
 def test_pipeline_stops_when_collect_fails(monkeypatch, tmp_path) -> None:
-    """Generate must not start if collect exits non-zero."""
+    """Generate must not start if collect exits with FAILURE."""
     monkeypatch.setattr(
         pipeline_runner,
         "setup_logging",
@@ -13,7 +13,7 @@ def test_pipeline_stops_when_collect_fails(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         pipeline_runner,
         "collect_main",
-        lambda _argv: pipeline_runner.CollectExitCode.PARTIAL_FAILURE,
+        lambda _argv: pipeline_runner.CollectExitCode.FAILURE,
     )
     monkeypatch.setattr(
         pipeline_runner,
@@ -23,7 +23,7 @@ def test_pipeline_stops_when_collect_fails(monkeypatch, tmp_path) -> None:
 
     result = pipeline_runner.run_pipeline()
 
-    assert result == pipeline_runner.CollectExitCode.PARTIAL_FAILURE
+    assert result == pipeline_runner.CollectExitCode.FAILURE
 
 
 def test_pipeline_runs_generate_after_successful_collect(monkeypatch, tmp_path) -> None:
@@ -47,3 +47,26 @@ def test_pipeline_runs_generate_after_successful_collect(monkeypatch, tmp_path) 
     result = pipeline_runner.run_pipeline()
 
     assert result == pipeline_runner.GenerateExitCode.PARTIAL_FAILURE
+
+
+def test_pipeline_runs_generate_when_collect_partial_fails(monkeypatch, tmp_path) -> None:
+    """Generate should run even when collect returns PARTIAL_FAILURE."""
+    monkeypatch.setattr(
+        pipeline_runner,
+        "setup_logging",
+        lambda _root: tmp_path / "pipeline.log",
+    )
+    monkeypatch.setattr(
+        pipeline_runner,
+        "collect_main",
+        lambda _argv: pipeline_runner.CollectExitCode.PARTIAL_FAILURE,
+    )
+    monkeypatch.setattr(
+        pipeline_runner,
+        "generate_main",
+        lambda _argv: pipeline_runner.GenerateExitCode.SUCCESS,
+    )
+
+    result = pipeline_runner.run_pipeline()
+
+    assert result == pipeline_runner.GenerateExitCode.SUCCESS

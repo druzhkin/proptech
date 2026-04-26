@@ -512,3 +512,44 @@
 - Отдельный scheduler-service здесь был бы архитектурной ошибкой: queue хранится в файловом volume, и второй сервис не дал бы боту те же данные без отдельного storage refactor
 - Правильная автономность для текущего проекта достигается не cron-сервисом, а in-process scheduler внутри уже живущего `review-bot`
 - Residual risk: `run_on_start` и трёхчасовой cadence означают реальные API-вызовы и расходы при каждом рестарте/цикле; если upstream снова отдаст слабый сигнал или OpenRouter деградирует, сервис останется живым, но качество и объём draft queue всё ещё будут зависеть от внешних провайдеров
+
+---
+
+## Итерация 14 — 2026-04-26
+
+### Цель итерации
+
+Снизить архитектурную энтропию: убрать дублирование кода, исправить некорректный exit code при evergreen fallback, добавить graceful shutdown для scheduler и расширить тестовое покрытие.
+
+### Задачи
+
+- [x] TASK-1: Убрать дублирование `_article_blob`, `_contains_keyword`, `_keyword_hits` между `editorial_policy.py` и `generate.py` — вынести shared helpers в `editorial_policy.py` и импортировать оттуда — агент: Coder
+- [x] TASK-2: Добавить graceful shutdown для `PipelineScheduler` (SIGINT/SIGTERM handlers в `bot.py`) и `stop()` при выходе из polling loop — агент: Coder
+- [x] TASK-3: Исправить `perplexity_ok` в `collect.py` при evergreen fallback: разделить `perplexity_provided_articles` и fallback, не маскировать исключения Perplexity — агент: Coder
+- [x] TASK-4: Расширить `pytest`-покрытие editorial policy: остальные tracks, boost_keywords, граничные score; добавить тесты на inline callback handlers бота — агент: Tester
+- [x] TASK-5: Прогнать quality gates и обновить журнал итерации — агент: Critic
+
+### Критерии готовности итерации
+
+- [x] `ruff check src/ tests/ --fix` проходит без ошибок
+- [x] `mypy src/ --ignore-missing-imports` проходит без новых ошибок
+- [x] `pytest tests/ -q` проходит (66 тестов)
+- [x] smoke-тесты: `python -c "from src.collect import main; print('collect OK')"` / `python -c "from src.generate import main; print('generate OK')"` / `python -c "from src.bot import main; print('bot OK')"`
+- [x] `python -c "import pipeline; print('pipeline OK')"`
+
+### Лог работы
+
+- [CODE] `src/editorial_policy.py`, `src/generate.py`: убрано дублирование `_article_blob`, `_contains_keyword`, `_keyword_hits` — generate.py теперь импортирует helpers через lazy-load; type hint в editorial_policy.py расширен до `Sequence[str]`
+- [CODE] `src/bot.py`: добавлен graceful shutdown через SIGINT/SIGTERM handlers; scheduler.stop() вызывается при получении сигнала; polling loop теперь `while not stopped`
+- [CODE] `src/collect.py`: исправлена логика `perplexity_ok` — `perplexity_provided_articles` отслеживается отдельно от evergreen fallback; исключения в Perplexity больше не маскируются evergreen fallback
+- [TEST] `tests/test_editorial_policy.py`: добавлены 5 тестов на drone/site_intelligence, bim/digital_twin, smart_building_ops, deployment/wow boost, moderate single-track score
+- [TEST] `tests/test_bot.py`: добавлены 2 теста на inline callback handlers (publish и skip); обновлён тест evergreen fallback при исключении Perplexity
+- [CRITIC] Прогнаны quality gates: `ruff check src/ tests/ --fix`, `mypy src/ --ignore-missing-imports`, `pytest tests/ -q` (66 passed), smoke imports для collect/generate/bot/pipeline
+
+### Ретроспектива итерации 14
+
+- Дублирование keyword-matching helpers убрано без ломки поведения: все 66 тестов проходят, generate.py стал короче на ~30 строк
+- Graceful shutdown закрывает операционный риск: при SIGINT/SIGTERM бот корректно останавливает scheduler перед выходом
+- Evergreen fallback теперь честно различает "пустой успешный ответ" и "исключение": тесты подтверждают, что при падении Perplexity fallback не срабатывает
+- Тестовое покрытие выросло с 59 до 66 тестов; editorial policy покрывает все 6 tracks и оба boost-класса; бот покрывает publish/skip callback paths
+- Residual risk: graceful shutdown тестируется только косвенно (через unit-тесты callback handlers), полный интеграционный тест сигналов в polling loop не написан; дублирование `_should_retry_http_error` между youtube_client.py и find_channels.py остаётся в бэклоге

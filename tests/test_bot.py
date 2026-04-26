@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from src import bot
 
@@ -272,3 +273,147 @@ def test_handle_message_accepts_next_alias(monkeypatch) -> None:
     )
 
     assert preview_requests == [("777", None, None, None)]
+
+
+def test_handle_callback_query_publish_updates_draft_status(monkeypatch) -> None:
+    """Publish callback should trigger publication and show the next draft."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeClient:
+        def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+            calls.append({"method": "answer_callback_query", "id": callback_query_id, "text": text})
+
+        def edit_message_reply_markup(self, chat_id: str | int, message_id: int) -> None:
+            calls.append({"method": "edit_message_reply_markup", "chat_id": chat_id, "message_id": message_id})
+
+    def fake_load_drafts(requested_date: str | None = None) -> tuple[str, list[dict[str, Any]]]:
+        del requested_date
+        return (
+            "2026-03-26",
+            [
+                {
+                    "id": "draft-abc-001",
+                    "article_id": "article-1",
+                    "title": "Draft title",
+                    "text": "Draft text",
+                    "status": "draft",
+                }
+            ],
+        )
+
+    def fake_publish_draft(client, draft, *, channel_id: str, admin_chat_id: str | int) -> dict[str, Any]:
+        del client, draft, channel_id, admin_chat_id
+        return {"telegram_message_id": 123}
+
+    def fake_record_publication(
+        drafts_date: str,
+        draft_id: str,
+        *,
+        channel_id: str,
+        telegram_message_id: int,
+        telegram_photo_message_id: int | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        del telegram_photo_message_id
+        return (
+            {"status": "published", "telegram_message_id": telegram_message_id},
+            f"data/published/{drafts_date}.json",
+        )
+
+    preview_requests: list[tuple[str | int, str | None, str | None, str | None]] = []
+
+    def fake_send_draft_preview(
+        client,
+        chat_id: str | int,
+        *,
+        drafts_date: str | None = None,
+        draft_id: str | None = None,
+        prefix_text: str | None = None,
+    ) -> None:
+        del client
+        preview_requests.append((chat_id, drafts_date, draft_id, prefix_text))
+
+    monkeypatch.setattr(bot, "load_drafts", fake_load_drafts)
+    monkeypatch.setattr(bot, "publish_draft", fake_publish_draft)
+    monkeypatch.setattr(bot, "record_publication", fake_record_publication)
+    monkeypatch.setattr(bot, "send_draft_preview", fake_send_draft_preview)
+
+    bot.handle_callback_query(
+        FakeClient(),  # type: ignore[arg-type]
+        {
+            "id": "cq-1",
+            "data": "publish|2026-03-26|draft-abc-001",
+            "message": {"chat": {"id": 777}, "message_id": 42},
+        },
+        channel_id="@proptech_channel",
+        pending_edits={},
+    )
+
+    assert any(c["method"] == "answer_callback_query" and c["text"] == "Опубликовано" for c in calls)
+    assert any(c["method"] == "edit_message_reply_markup" for c in calls)
+    assert preview_requests
+
+
+def test_handle_callback_query_skip_updates_draft_status(monkeypatch) -> None:
+    """Skip callback should mark draft skipped and show the next draft."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeClient:
+        def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+            calls.append({"method": "answer_callback_query", "id": callback_query_id, "text": text})
+
+        def edit_message_reply_markup(self, chat_id: str | int, message_id: int) -> None:
+            calls.append({"method": "edit_message_reply_markup", "chat_id": chat_id, "message_id": message_id})
+
+    def fake_load_drafts(requested_date: str | None = None) -> tuple[str, list[dict[str, Any]]]:
+        del requested_date
+        return (
+            "2026-03-26",
+            [
+                {
+                    "id": "draft-abc-002",
+                    "article_id": "article-2",
+                    "title": "Draft title",
+                    "text": "Draft text",
+                    "status": "draft",
+                }
+            ],
+        )
+
+    skipped: list[tuple[str, str]] = []
+
+    def fake_mark_draft_skipped(drafts_date: str, draft_id: str) -> dict[str, Any]:
+        skipped.append((drafts_date, draft_id))
+        return {"status": "skipped"}
+
+    preview_requests: list[tuple[str | int, str | None, str | None, str | None]] = []
+
+    def fake_send_draft_preview(
+        client,
+        chat_id: str | int,
+        *,
+        drafts_date: str | None = None,
+        draft_id: str | None = None,
+        prefix_text: str | None = None,
+    ) -> None:
+        del client
+        preview_requests.append((chat_id, drafts_date, draft_id, prefix_text))
+
+    monkeypatch.setattr(bot, "load_drafts", fake_load_drafts)
+    monkeypatch.setattr(bot, "mark_draft_skipped", fake_mark_draft_skipped)
+    monkeypatch.setattr(bot, "send_draft_preview", fake_send_draft_preview)
+
+    bot.handle_callback_query(
+        FakeClient(),  # type: ignore[arg-type]
+        {
+            "id": "cq-2",
+            "data": "skip|2026-03-26|draft-abc-002",
+            "message": {"chat": {"id": 777}, "message_id": 43},
+        },
+        channel_id="@proptech_channel",
+        pending_edits={},
+    )
+
+    assert any(c["method"] == "answer_callback_query" and c["text"] == "Пропущено" for c in calls)
+    assert any(c["method"] == "edit_message_reply_markup" for c in calls)
+    assert skipped == [("2026-03-26", "draft-abc-002")]
+    assert preview_requests
